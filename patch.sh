@@ -24,6 +24,7 @@ FRANKENSTEIN=false
 
 NVOSS=false
 DBGNVOSS=false
+REMAP_P2V=false
 KLOGT=true
 TESTSIGN=true
 SETUP_TESTSIGN=false
@@ -61,6 +62,60 @@ vcfgpatch() {
     sed -e "s/\(.* deviceId=\"\)${2}\(\" subsystemVendorId=\"\)0x10de\(\" subsystemId=\"\)${3}\(\".*\)/\1${4}\20x10de\3${5}\4/" -i ${1}
 }
 
+remap_P40_to_V100D() {
+    local -A map
+    map["P40-1B"]="V100D-1B"
+    map["P40-2B"]="V100D-2B"
+    map["P40-1Q"]="V100D-1Q"
+    map["P40-2Q"]="V100D-2Q"
+    map["P40-4Q"]="V100D-4Q"
+    map["P40-8Q"]="V100D-8Q"
+    map["P40-12Q"]="V100D-16Q"
+    map["P40-24Q"]="V100D-32Q"
+    map["P40-1A"]="V100D-1A"
+    map["P40-2A"]="V100D-2A"
+    map["P40-4A"]="V100D-4A"
+    map["P40-8A"]="V100D-8A"
+    map["P40-12A"]="V100D-16A"
+    map["P40-24A"]="V100D-32A"
+    map["P40-1B4"]="V100D-2B4"
+    map["P40-1B4"]="V100D-1B4"
+    map["P40-24C"]="V100D-32C"
+    map["P40-4C"]="V100D-4C"
+    map["P40-8C"]="V100D-8C"
+    map["P40-12C"]="V100D-16C"
+
+    echo "remapping P40 profiles to V100D ..."
+    $CP "${1}" "${1}.tmp"
+    sed -e 's/.* name="GRID \(P40-[^"]*\)" .*/\1\t/' -e 't match' -e d -e ':match' -e N \
+        -e 's/ *<devId .* deviceId="\([^"]*\)" .* subsystemId="\([^"]*\)".*/\1\t\2/' \
+        -e 's/\n//' "${1}.tmp" | while read pname pdev psub
+    do
+        if [ -n "${map[$pname]}" ]; then
+            vname="${pname/P/V}"
+            read vdev vsub <<< $(
+                sed -e "s/.* name=\"GRID ${map[$pname]}\" .*//" -e 't match' -e d -e ':match' -e N \
+                    -e 's/ *<devId .* deviceId="\([^"]*\)" .* subsystemId="\([^"]*\)".*/\1\t\2/' \
+                    -e 's/\n//' "${1}"
+            )
+        else
+            vname="${pname/P/V}"
+            map[$pname]="V100D"
+            vdev="0x1DB6"
+            vsub="0x124A"
+        fi
+        printf "        %-8s->  %-8s<-  %-9s    (0x%04x 0x%04x -> 0x%04x 0x%04x)\n" "${pname}" "${vname}" "${map[$pname]}" $pdev $psub $vdev $vsub
+        sed -e "/ name=\"GRID ${pname}\" / b match" -e b -e ':match' -e N \
+            -e "s/ name=\"GRID ${pname}\"/ name=\"GRID ${vname}\"/" \
+            -e "s/ deviceId=\"[^\"]*\"/ deviceId=\"${vdev}\"/" \
+            -e "s/ subsystemId=\"[^\"]*\"/ subsystemId=\"${vsub}\"/" \
+            -i "${1}"
+    done
+    rm -f "${1}.tmp"
+    echo "... done"
+    echo
+}
+
 
 DO_VGPU=false
 DO_GNRL=false
@@ -81,6 +136,10 @@ do
         --nvoss-debug)
             shift
             DBGNVOSS=true
+            ;;
+        --remap-p2v)
+            shift
+            REMAP_P2V=true
             ;;
         --no-klogtrace)
             shift
@@ -207,6 +266,15 @@ case "$1" in
         }
         vcfgclone "$@"
         #vcfgpatch "$@"
+        exit $?
+        ;;
+    remap-p2v)
+        shift
+        [ $# -eq 1 -a -e "$1" ] || {
+            echo "Usage: $0 remap-p2v xmlfile"
+            exit 1
+        }
+        remap_P40_to_V100D "$1"
         exit $?
         ;;
     diff2c)
@@ -636,6 +704,9 @@ if $DO_VGPU; then
     applypatch ${TARGET} vcfg-v15vcs.patch
     applypatch ${TARGET} vcfg-testing.patch
     applypatchx ${TARGET} verbose-firmware-load.patch
+
+    $REMAP_P2V && remap_P40_to_V100D ${TARGET}/vgpuConfig.xml
+
     vcfgclone ${TARGET}/vgpuConfig.xml 0x1E30 0x12BA 0x1E07 0x0000	# RTX 2080 Ti
     vcfgclone ${TARGET}/vgpuConfig.xml 0x1E30 0x12BA 0x1E84 0x0000	# RTX 2070 super 8GB
     vcfgclone ${TARGET}/vgpuConfig.xml 0x1E30 0x12BA 0x1E81 0x0000	# RTX 2080 super 8GB
@@ -650,9 +721,9 @@ if $DO_VGPU; then
     vcfgclone ${TARGET}/vgpuConfig.xml 0x1B38 0x0 0x1B06 0x0000		# GTX 1080 Ti
     vcfgclone ${TARGET}/vgpuConfig.xml 0x1B38 0x0 0x1B81 0x0000		# GTX 1070
     vcfgclone ${TARGET}/vgpuConfig.xml 0x1B38 0x0 0x1D01 0x0000		# GTX 1030 -> Tesla P40
-    vcfgclone ${TARGET}/vgpuConfig.xml 0x13F2 0x0 0x17FD 0x0000		# Tesla M40 -> Tesla M60
-    vcfgclone ${TARGET}/vgpuConfig.xml 0x13F2 0x0 0x13C0 0x0000		# GTX 980 -> Tesla M60
-    vcfgclone ${TARGET}/vgpuConfig.xml 0x13F2 0x0 0x13D7 0x0000		# GTX 980M -> Tesla M60
+    vcfgclone ${TARGET}/vgpuConfig.xml 0x13BD 0x1160 0x17FD 0x0000	# Tesla M40 -> Tesla M10
+    vcfgclone ${TARGET}/vgpuConfig.xml 0x13BD 0x1160 0x13C0 0x0000	# GTX 980 -> Tesla M10
+    vcfgclone ${TARGET}/vgpuConfig.xml 0x13BD 0x1160 0x13D7 0x0000	# GTX 980M -> Tesla M10
     vcfgclone ${TARGET}/vgpuConfig.xml 0x13BD 0x1160 0x139A 0x0000	# GTX 950M -> Tesla M10
     echo
 fi
