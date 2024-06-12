@@ -563,6 +563,7 @@ if $NVOSS; then
         $CP ${NVKMSRC} ${NVKMSRC}-patched
         #( cd ${NVKMSRC}-patched; git init . && git add -f . && git commit -m "unpacked ${NVKMSRC}.tar.xz"; )
         applypatch ${NVKMSRC}-patched openrm-test-gsp-ver-mismatch.patch
+        applypatch ${NVKMSRC}-patched openrm-override-vgx-fw-capable.patch
     }
     NVKMSRC=${NVKMSRC}-patched
     NVOPTS=""

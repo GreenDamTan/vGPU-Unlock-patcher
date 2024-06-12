@@ -1,0 +1,13 @@
+diff --git a/src/nvidia/src/kernel/gpu_mgr/gpu_mgr.c b/src/nvidia/src/kernel/gpu_mgr/gpu_mgr.c
+index dd03695..2be8470 100644
+--- a/src/nvidia/src/kernel/gpu_mgr/gpu_mgr.c
++++ b/src/nvidia/src/kernel/gpu_mgr/gpu_mgr.c
+@@ -996,7 +996,7 @@ static NvBool _gpumgrIsRmFirmwareCapableChip(NvU32 pmcBoot42)
+ 
+ NvBool gpumgrIsVgxRmFirmwareCapableChip(NvU32 pmcBoot42)
+ {
+-    if (FLD_TEST_DRF(_PMC, _BOOT_42, _ARCHITECTURE, _GH100, pmcBoot42))
++//    if (FLD_TEST_DRF(_PMC, _BOOT_42, _ARCHITECTURE, _GH100, pmcBoot42))
+         return NV_TRUE;
+ 
+     if (FLD_TEST_DRF(_PMC, _BOOT_42, _ARCHITECTURE, _AD100, pmcBoot42))
