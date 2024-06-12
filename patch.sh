@@ -494,7 +494,7 @@ if $NVOSS; then
         }
         $CP ${NVKMSRC} ${NVKMSRC}-patched
         #( cd ${NVKMSRC}-patched; git init . && git add -f . && git commit -m "unpacked ${NVKMSRC}.tar.xz"; )
-        applypatch ${NVKMSRC} test-gsp-ver-mismatch.patch
+        applypatch ${NVKMSRC}-patched openrm-test-gsp-ver-mismatch.patch
     }
     NVKMSRC=${NVKMSRC}-patched
     NVOPTS=""
@@ -504,7 +504,7 @@ if $NVOSS; then
     echo "about to build nvidia module blobs from published sources, please wait..."
     nv_kernel_o_binary="kernel-open/nvidia/nv-kernel.o_binary"
     nv_modeset_kernel_o_binary="kernel-open/nvidia-modeset/nv-modeset-kernel.o_binary"
-    make -C ${NVKMSRC} ${NVOPT} -j$(nproc) ${nv_kernel_o_binary} ${nv_modeset_kernel_o_binary} &>/dev/null || die "build of nvoss failed!"
+    make -C ${NVKMSRC} ${NVOPTS} -j$(nproc) ${nv_kernel_o_binary} ${nv_modeset_kernel_o_binary} &>/dev/null || die "build of nvoss failed!"
     echo "replacing kernel-open nvidia module blobs with compiled ones..."
     if [ -e ${TARGET}/${nv_kernel_o_binary} ]; then
         $CP ${NVKMSRC}/${nv_kernel_o_binary} ${TARGET}/${nv_kernel_o_binary}
