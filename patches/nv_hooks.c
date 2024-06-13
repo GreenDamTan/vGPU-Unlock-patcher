@@ -281,7 +281,7 @@ static struct vup_patch_item vup_diff_sunlock[] = {
 	{ 0x000BDD21, 0x42, 0x00 },
 
 	// based on patch from LIL'pingu fixing xid 43 crashes
-	{ 0x0089B39A, 0x10, 0x00 },
+	{ 0x000BD79C, 0x10, 0x00 },
 };
 VUP_PATCH_DEF(sunlock, 0, 1, 1);
 
