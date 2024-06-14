@@ -80,16 +80,16 @@ index 045d7f1..a0dbf2c 100644
      if(list_empty(&phys_devices.phys_dev_list))
          return;
  
-@@ -5047,6 +5055,9 @@ static int __init nv_vgpu_vfio_init(void)
+@@ -5703,6 +5712,9 @@ static int __init nv_vgpu_vfio_init(void)
          {}
      };
  
 +    if (nv_vgpu_kvm_enable <= 0)
 +        return 0;
 +
-     rm_vgpu_vfio_ops.version_string = NV_VERSION_STRING;
-     get_ops = NULL;
-     set_ops = NULL;
+     if (dmi_check_system(nv_vgpu_dmi_table))
+     {
+         NV_VGPU_LOG(VGPU_ERR, "vGPU Driver VM architecture enabled\n");
 @@ -5121,6 +5133,9 @@ static void __exit nv_vgpu_vfio_exit(void)
  #if defined(NV_VGPU_KVM_BUILD)
      phys_dev_t *phys_dev, *tmpdev;
@@ -143,14 +143,14 @@ diff --git a/kernel/nvidia/nv-pci.c b/kernel/nvidia/nv-pci.c
 index 311d9fd..e3f45dd 100644
 --- a/kernel/nvidia/nv-pci.c
 +++ b/kernel/nvidia/nv-pci.c
-@@ -187,6 +187,7 @@ nv_pci_probe
+@@ -216,6 +216,7 @@ nv_pci_probe
      if (pci_dev->is_virtfn)
      {
  #if defined(NV_VGPU_KVM_BUILD)
 +      if (nv_vgpu_kvm_enable > 0) {
-         nvl = pci_get_drvdata(pci_dev->physfn);
-         if (!nvl)
-         {
+ 
+ #if defined(NV_BUS_TYPE_HAS_IOMMU_OPS)
+         if (pci_dev->dev.bus->iommu_ops == NULL) 
 @@ -218,13 +219,15 @@ nv_pci_probe
  
          nv_kmem_cache_free_stack(sp);
