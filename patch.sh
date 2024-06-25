@@ -2,9 +2,9 @@
 
 BASEDIR=$(dirname $0)
 
-GNRL="NVIDIA-Linux-x86_64-550.54.14"
-VGPU="NVIDIA-Linux-x86_64-550.54.10-vgpu-kvm"
-GRID="NVIDIA-Linux-x86_64-550.54.14-grid"
+GNRL="NVIDIA-Linux-x86_64-550.90.07"
+VGPU="NVIDIA-Linux-x86_64-550.90.05-vgpu-kvm"
+GRID="NVIDIA-Linux-x86_64-550.90.07-grid"
 #WSYS="NVIDIA-Windows-x86_64-474.30"
 #WSYS="NVIDIA-Windows-x86_64-512.15"
 #WSYS="NVIDIA-Windows-x86_64-516.25"
@@ -19,7 +19,8 @@ GRID="NVIDIA-Linux-x86_64-550.54.14-grid"
 #WSYS="NVIDIA-Windows-x86_64-537.13"
 #WSYS="NVIDIA-Windows-x86_64-537.70"
 #WSYS="NVIDIA-Windows-x86_64-538.33"
-WSYS="NVIDIA-Windows-x86_64-551.61"
+#WSYS="NVIDIA-Windows-x86_64-551.61"
+WSYS="NVIDIA-Windows-x86_64-552.55"
 FRANKENSTEIN=false
 
 NVOSS=false
@@ -547,6 +548,7 @@ fi
 
 rm -rf ${TARGET}
 $CP ${SOURCE} ${TARGET}
+#( cd ${TARGET}; git init .; git add -f .; git commit -m initial; )
 
 if $NVOSS; then
     which gcc &>/dev/null || die "gcc is needed to compile nvidia kernel-open blobs"
