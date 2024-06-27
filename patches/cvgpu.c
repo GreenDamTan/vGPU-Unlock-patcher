@@ -519,16 +519,21 @@ int ioctl(int fd, int request, void *data)
     if ((0x13c0 <= actual_devid && actual_devid <= 0x1436) ||
       (0x1617 <= actual_devid && actual_devid <= 0x1667) ||
       (0x17c2 <= actual_devid && actual_devid <= 0x17fd)) {
-      spoofed_devid = 0x13f2; // Tesla M60
+//      spoofed_devid = 0x13f2; // Tesla M60
+        spoofed_devid = 0x13bd; // Tesla M10
+        spoofed_subsysid = 0x1160;
     }
     // Pascal
     if ((0x15f0 <= actual_devid && actual_devid <= 0x15f1) ||
       (0x1b00 <= actual_devid && actual_devid <= 0x1d56) ||
       (0x1725 <= actual_devid && actual_devid <= 0x172f)) {
-      spoofed_devid = 0x1b38; // Tesla P40
+//      spoofed_devid = 0x1b38; // Tesla P40
+        spoofed_devid = 0x2233; // A5500
+        spoofed_subsysid = 0x165a;
     }
     // GV100 Volta
     if (actual_devid == 0x1d81 || // TITAN V
+      actual_devid == 0x1df4 || // CMP 100-210
       actual_devid == 0x1dba) { // Quadro GV100 32GB
       spoofed_devid = 0x1db6; // Tesla V100 32GB PCIE
     }
@@ -543,7 +548,8 @@ int ioctl(int fd, int request, void *data)
       //spoofed_subsysid = 0x134d;
     }
     // Ampere
-    if (0x2200 <= actual_devid && actual_devid <= 0x2600) {
+    if ((actual_devid == 0x20C2 || actual_devid == 0x2082) || //CMP 170HX
+    (0x2200 <= actual_devid && actual_devid <= 0x2600)) {
       spoofed_devid = 0x2230; // RTX A6000
     }
     if (spoof_devid_override) {

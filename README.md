@@ -5,6 +5,8 @@ A solution to patch vGPU_Unlock into nvidia driver, including possibility to cre
 
 This repository contains a submodule, so please clone this project recursively, i.e. using `git clone --recursive` command.
 
+[中文补充说明(非文档翻译)](README.cn.note.md)
+
 ## Usage
 
 1. download original vgpu kvm `.run` files as available in a grid package `.zip` release, use the version matching the name of chosen branch of this project (the latest one is recommended)

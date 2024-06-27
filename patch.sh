@@ -127,6 +127,9 @@ DO_UNLK=true
 DO_LIBS=true
 SPOOF_DEVID=false
 
+STRIP_KERNEL_OPEN=false
+REPACK_ZSTD=false
+
 while [ $# -gt 0 -a "${1:0:2}" = "--" ]
 do
     case "$1" in
@@ -181,6 +184,16 @@ do
         --envy-probes)
             shift
             ENVYPROBES=true
+            ;;
+        --strip_kernel_open)
+            shift
+            STRIP_KERNEL_OPEN=true
+            !$REPACK && echo "WARNING: strip_kernel_open only work repack"
+            ;;
+        --zstd)
+            shift
+            REPACK_ZSTD=true
+            !$REPACK && echo "WARNING: zstd only work repack"
             ;;
         *)
             echo "Unknown option $1"
@@ -675,6 +688,7 @@ $TDMABUFEXPORT && {
     applypatch ${TARGET} test-dmabuf-export.patch
 }
 $DO_VGPU && applypatchx ${TARGET} vgpu-kvm-optional-vgpu-v2.patch
+$DO_VGPU && sed -e 's/is_vgpu_host_package/_s_vgpu_host_package/g'  -i ${TARGET}/nvidia-installer
 
 $DO_MRGD && {
     sed -e '/^NVIDIA_CFLAGS += .*BIT_MACROS$/aNVIDIA_CFLAGS += -DVUP_MERGED_DRIVER=1' -i ${TARGET}/kernel{,-open}/nvidia/nvidia.Kbuild
@@ -741,10 +755,13 @@ $ENVYPROBES && {
 }
 
 if $REPACK; then
+    $DO_VGPU && $STRIP_KERNEL_OPEN && rm -rf ${TARGET}/kernel-open/*
     REPACK_OPTS="${REPACK_OPTS:---silent}"
     [ -e ${TARGET}.lsm ] && REPACK_OPTS="${REPACK_OPTS} --lsm ${TARGET}.lsm"
     [ -e ${TARGET}/pkg-history.txt ] && REPACK_OPTS="${REPACK_OPTS} --pkg-history ${TARGET}/pkg-history.txt"
     echo "about to create ${TARGET}.run file"
+    chmod +x ${BASEDIR}/tools/zstd
+    $REPACK_ZSTD && REPACK_OPTS="${REPACK_OPTS} --zstd --embed-decompress ${BASEDIR}/tools/zstd"
     ./${TARGET}/makeself.sh ${REPACK_OPTS} --version-string "${VER_TARGET}" --target-os Linux --target-arch x86_64 \
         ${TARGET} ${TARGET}.run \
         "NVIDIA Accelerated Graphics Driver for Linux-x86_64 ${TARGET#NVIDIA-Linux-x86_64-}" \

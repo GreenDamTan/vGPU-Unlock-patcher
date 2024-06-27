@@ -4,3 +4,4 @@ NVIDIA-kernel-module-source-*
 *[-_]win*[-_]64bit*.exe
 nsigpatch
 wtestsign/
+/.idea
