@@ -53,13 +53,14 @@ case `stat -f --format=%T .` in
 esac
 
 vcfgclone() {
-    echo "vcfgclone ${2#0x}:${3#0x} -> ${4#0x}:${5#0x}"
+    printf "vcfgclone %04x:%04x -> %04x:%04x\n" ${2} ${3} ${4} ${5}
     sed -e '/<pgpu/ b found' -e b -e ':found' -e '/<\/pgpu>/ b clone' -e N -e 'b found' \
-        -e ':clone' -e p -e "s/\(.* deviceId=\"\)${2}\(\" subsystemVendorId=\"\)0x10de\(\" subsystemId=\"\)${3}\(\".*\)/\1${4}\20x10de\3${5}\4/" -e t -e d -i ${1}
+        -e ':clone' -e "s/\(.* deviceId=\"${4}\" subsystemVendorId=\"\)0x10de\(\" subsystemId=\"${5}\".*\)/\10x9999\2/" -e t -e p \
+        -e "s/\(.* deviceId=\"\)${2}\(\" subsystemVendorId=\"\)0x10de\(\" subsystemId=\"\)${3}\(\".*\)/\1${4}\20x10de\3${5}\4/" -e t -e d -i ${1}
 }
 
 vcfgpatch() {
-    echo "vcfgpatch ${2#0x}:${3#0x} -> ${4#0x}:${5#0x}"
+    printf "vcfgpatch %04x:%04x -> %04x:%04x\n" ${2} ${3} ${4} ${5}
     sed -e "s/\(.* deviceId=\"\)${2}\(\" subsystemVendorId=\"\)0x10de\(\" subsystemId=\"\)${3}\(\".*\)/\1${4}\20x10de\3${5}\4/" -i ${1}
 }
 
@@ -731,6 +732,9 @@ if $DO_VGPU; then
     vcfgclone ${TARGET}/vgpuConfig.xml 0x13BD 0x1160 0x13C0 0x0000	# GTX 980 -> Tesla M10
     vcfgclone ${TARGET}/vgpuConfig.xml 0x13BD 0x1160 0x13D7 0x0000	# GTX 980M -> Tesla M10
     vcfgclone ${TARGET}/vgpuConfig.xml 0x13BD 0x1160 0x139A 0x0000	# GTX 950M -> Tesla M10
+    $REMAP_P2V && {
+        vcfgclone ${TARGET}/vgpuConfig.xml 0x1B38 0x0 0x1BB3 0x0	# Tesla P4 -> Tesla P40
+    }
     echo
 fi
 
