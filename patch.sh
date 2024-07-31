@@ -663,6 +663,9 @@ echo
 if [ -e patches/blob-${VER_BLOB}.diff ]; then
     blobpatch ${TARGET}/kernel/nvidia/nv-kernel.o_binary patches/blob-${VER_BLOB}.diff || exit 1
 fi
+if [ -e patches/vgpud-${VER_BLOB}.diff ]; then
+    blobpatch ${TARGET}/nvidia-vgpud patches/vgpud-${VER_BLOB}.diff || exit 1
+fi
 applypatch ${TARGET} setup-vup-hooks.patch
 applypatchx ${TARGET} filter-for-nvrm-logs.patch
 [ -d ${TARGET}/kernel/nvidia-drm ] && applypatchx ${TARGET} test-kms-support.patch
