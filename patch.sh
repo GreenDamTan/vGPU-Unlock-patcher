@@ -130,6 +130,7 @@ SPOOF_DEVID=false
 
 STRIP_KERNEL_OPEN=false
 REPACK_ZSTD=false
+UnlockRS=false
 
 while [ $# -gt 0 -a "${1:0:2}" = "--" ]
 do
@@ -195,6 +196,11 @@ do
             shift
             REPACK_ZSTD=true
             !$REPACK && echo "WARNING: zstd only work repack"
+            ;;
+        --UnlockRS)
+            shift
+            UnlockRS=true
+            $SPOOF_DEVID && echo "WARNING: UnlockRS only work with out spoof-devid"
             ;;
         *)
             echo "Unknown option $1"
@@ -719,6 +725,15 @@ if $DO_VGPU; then
         }
         sed -e 's/\(enable_spoof_devid\)=./\1=1/' -i ${TARGET}/libvgpucompat.so
     fi
+    $SPOOF_DEVID || $UnlockRS  && {
+      cp ${BASEDIR}/tools/libvgpu_unlock_rs.so ${TARGET}/libvgpu_unlock_rs.so
+      echo "libvgpu_unlock_rs.so 0755 VGX_LIB NATIVE MODULE:vgpu" >> ${TARGET}/.manifest
+      which patchelf &>/dev/null || die "patchelf not found"
+      for s in nvidia-vgpu-mgr nvidia-vgpud
+      do
+          patchelf --add-needed libvgpu_unlock_rs.so ${TARGET}/${s}
+      done
+    }
     applypatchx ${TARGET} vgpu-kvm-nvidia-535.54-compat.patch
     applypatchx ${TARGET} workaround-for-cards-with-inforom-error.patch
     applypatch ${TARGET} vcfg-v16mpp.patch
