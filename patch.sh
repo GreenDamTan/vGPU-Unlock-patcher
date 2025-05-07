@@ -786,8 +786,8 @@ if $REPACK; then
     $REPACK_ZSTD && REPACK_OPTS="${REPACK_OPTS} --zstd --embed-decompress ${BASEDIR}/tools/zstd"
     ./${TARGET}/makeself.sh ${REPACK_OPTS} --version-string "${VER_TARGET}" --target-os Linux --target-arch x86_64 \
         ${TARGET} ${TARGET}.run \
-        "NVIDIA Accelerated Graphics Driver for Linux-x86_64 ${TARGET#NVIDIA-Linux-x86_64-}" \
-        ./nvidia-installer
+        "NVIDIA Accelerated Graphics Driver for Linux-x86_64 GreenDamTan ${TARGET#NVIDIA-Linux-x86_64-}" \
+        ./nvidia-installer -m kernel
     rm -f ${TARGET}.lsm
     echo "done"
 fi

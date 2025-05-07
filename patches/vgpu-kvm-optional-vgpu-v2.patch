@@ -143,7 +143,7 @@ index 52b2b87..7e861f4 100644
 +        else
 +            nv_vgpukvm_kmalloc_limit = 131072;
 +    }
-+    printk(KERN_INFO "nvidia: vgpu-kvm%s build vgpukvm=%d kmalimit=%u\n",
++    printk(KERN_INFO "nvidia: vgpu-kvm%s GreenDamTan build vgpukvm=%d kmalimit=%u\n",
 +        VUP_MERGED_DRIVER ? "-merged" : "",
 +        nv_vgpu_kvm_enable, nv_vgpukvm_kmalloc_limit);
 +#endif
