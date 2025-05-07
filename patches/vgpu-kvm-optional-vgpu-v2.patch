@@ -50,6 +50,17 @@ diff --git a/kernel/nvidia-vgpu-vfio/nvidia-vgpu-vfio.c b/kernel/nvidia-vgpu-vfi
 index 045d7f1..a0dbf2c 100644
 --- a/kernel/nvidia-vgpu-vfio/nvidia-vgpu-vfio.c
 +++ b/kernel/nvidia-vgpu-vfio/nvidia-vgpu-vfio.c
+@@ -31,6 +31,10 @@
+ #include "nv-vgpu-vfio-interface.h"
+ #include "vgpu-devices.h"
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,12,0)
++#define no_llseek NULL
++#endif
++
+ #ifdef NV_VFIO_DEVICE_GFX_PLANE_INFO_PRESENT
+ #include <drm/drm_fourcc.h>
+ #endif
 @@ -46,6 +46,9 @@ struct phys_devs phys_devices;
  #if defined(NV_VGPU_KVM_BUILD)
  NvBool is_driver_vm;
@@ -100,6 +111,20 @@ index 045d7f1..a0dbf2c 100644
      list_for_each_entry_safe(phys_dev, tmpdev, &phys_devices.phys_dev_list, next)
      {
          mdev_unregister_device(&phys_dev->dev->dev);
+@@ -5807,8 +5811,12 @@
+ MODULE_VERSION(NV_VERSION_STRING);
+ 
+ #if defined(MODULE_IMPORT_NS)
+-MODULE_IMPORT_NS(IOMMUFD);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,13,0)
++MODULE_IMPORT_NS("IOMMUFD");
++#else
++ MODULE_IMPORT_NS(IOMMUFD);
+ #endif
++#endif
+ 
+ #if defined(NV_VGPU_KVM_BUILD)
+ MODULE_SOFTDEP("pre: nvidia");
 diff --git a/kernel/nvidia/nv.c b/kernel/nvidia/nv.c
 index 52b2b87..7e861f4 100644
 --- a/kernel/nvidia/nv.c
