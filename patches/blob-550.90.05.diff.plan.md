@@ -222,14 +222,119 @@
      - `gpu_group.c`
    - 用于比对设备能力、状态聚合、设备 ID / 子设备 ID / policy 判定相关逻辑
 
-#### H. 对正式分析步骤的直接影响
+#### H. 当前已确认的业务语义起点
+
+以下内容是已经能够从源码与 IDA 双方提炼出的“业务语义起点”，后续正式报告必须围绕这些语义展开，而不是只停留在字节/指令层。
+
+##### 1) `_nv046497rm` 对应的是 software runlist scheduler 的运行时配置逻辑
+
+结合 `drivers/resman/src/physical/gpu/fifo/objsched.c:3726-3817` 与 `drivers/resman/src/physical/gpu/fifo/objschedmgr.c:935-968`，当前已可确认：
+
+- `schedMgrSwrlSetCountMax_IMPL()` 会遍历有效 runlist，并把 `swrlCountMax` 下发给 `schedSwSwrlSetCountMax()`
+- `schedSwSwrlSetCountMax_IMPL()` 负责真正修改 software runlist scheduler 的“最大虚拟 runlist 数量”与相关 timeslice 配置
+- 业务上，这不是一个普通调试函数，而是 software scheduling / runlist 配置链路中的实际运行时控制点
+
+因此，正式报告在分析 `0x0047CBB7`、`0x0047CC70`、`0x02EADC58` 时，必须解释：
+
+- `swrlCountMax` 在 scheduler 中控制什么
+- 为什么源码里原本禁止“在 SWRL 正在运行时修改 count max”
+- 修改该限制对运行中软件调度器意味着什么
+- timeslice 计算与 `swrlCountMax` 的关系为何构成业务影响
+
+##### 2) `_nv046497rm` 相关 patch 的业务变化不只是“分支改了”，而是“运行时策略限制被放宽”
+
+根据当前已确认的反编译与源码：
+
+- 原始源码语义：
+  - 如果 `pSchedSw->swrlCount != 0`，则打印
+    - `NVRM: Can't change software runlist max count.`
+  - 并返回 `NV_ERR_INVALID_STATE`
+- 这表明原始业务规则是：
+  - **software runlist scheduler 一旦已经在运行，就不允许动态修改最大虚拟 runlist 数量**
+
+结合当前 patch 字节形态，正式报告中必须重点确认并说明：
+
+- patch 是否实际把这条“运行中不可修改”的保护逻辑绕开
+- patch 前：调用方会因状态不合法而失败
+- patch 后：调用方是否能够在 scheduler 已运行时继续修改 `swrlCountMax`
+- 这种变化会不会影响：
+  - 调度时序
+  - runlist 布局
+  - timeslice 分配
+  - 运行中 VM / vGPU 的公平性或稳定性
+
+##### 3) `.rodata` patch 需要按“可观测性变化”来分析
+
+当前已确认：
+
+- `0x02EADC58 -> 0x02EADC18` 命中的是字符串尾部 `count.\n\0`
+- 它位于 `_nv046497rm` 使用的日志字符串区域
+- `0x0047CC70 -> 0x0047CC30` 同时修改了原本给 `nv_printf` 准备参数的代码
+
+因此，正式报告不能把这个 `.rodata` patch 当作孤立字符串改动，而必须解释：
+
+- 字符串 patch 是否是在配合代码 patch 改变日志格式
+- 原始日志输出表达了什么
+- patch 后日志是否改成携带更多上下文（例如当前值 / 目标值）
+- 即使该路径后续可能变成弱可达或不可达，也要说明它在“错误诊断/调试可观测性”上的潜在含义
+
+##### 4) `_nv032674rm` 很可能是某种“设备支持 / 特性支持”布尔判定函数
+
+虽然目前还没有源码级 100% 锚定，但从反编译可见：
+
+- 函数内部存在大量按设备 ID / 子设备 ID 的白名单或特判逻辑
+- 返回值语义接近布尔量
+- 它被 `_nv026411rm` 调用，并直接影响后续状态位聚合路径
+- 它的语义特征与 `drivers/resman/src/kernel/virtualization/grid/grid_features.c:isGridLicenseSupported()` 存在较强相似性，需要在正式分析中重点对比
+
+因此，正式报告中必须把 `0x000D65A4` 这组 patch 作为“业务开关”类 patch 来审视，重点回答：
+
+- patch 是否把原本依赖设备白名单/平台状态的支持判定强行改成恒成立
+- 若恒成立，被放开的到底是：
+  - vGPU software licensing 支持判定
+  - 某类 GRID feature 支持判定
+  - 或更底层的 capability gate
+- patch 前后，哪些本来不应通过的 GPU / SKU / 配置可能被视为“支持”
+
+##### 5) `_nv026411rm` 应按“能力探测结果聚合”来写报告
+
+当前已确认：
+
+- `_nv026411rm` 会调用 `_nv032674rm`
+- 还会调用 `_nv026628rm` 以及若干函数指针回调
+- 最终会写入一组连续状态字节（`a1 + 18010 ~ 18017` 一带）
+- 这些字节显然不是临时变量，而更像是被后续流程消费的 capability / feature state 缓存
+
+因此，正式报告中不能只写“它设置了一些字节”，而必须尽量解释：
+
+- 这些状态字节分别代表什么业务状态
+- `_nv032674rm` 的返回值如何改变这些状态的最终组合
+- patch 前后，这条聚合链会让后续上层逻辑认为 GPU 具备了哪些能力 / 许可 / 支持状态
+- 哪些调用方或控制命令可能直接消费这些状态
+
+##### 6) 报告必须显式区分“已确认业务事实”和“待验证业务推断”
+
+本次 patch 业务分析里，至少有两类内容：
+
+- **已确认业务事实**
+  - 例如 `_nv046497rm` 命中 `objsched.c` 的 runlist/timeslice 控制逻辑
+  - 例如 `_nv046497rm` 原始源码明确禁止运行中修改 `swrlCountMax`
+- **待验证业务推断**
+  - 例如 `_nv032674rm` 是否可一一对应到 `isGridLicenseSupported()`
+  - 例如 `_nv026411rm` 写入的状态字节分别对应哪个外部能力位
+
+正式报告必须把这两者明确分开，避免把尚未完成源码对位的业务结论写成既定事实。
+
+#### I. 对正式分析步骤的直接影响
 
 基于当前发现，后续执行不应再从“盲搜全仓库”开始，而应按以下顺序推进：
 
 1. 先把 5 个 patch 点全部换算为 `IDA_EA = DIFF_OFFSET - 0x40`
 2. 先完成 `_nv046497rm` 对 `objsched.c` 的完整地址级映射
-3. 再围绕 `_nv026411rm -> _nv032674rm` 调用链寻找 virtualization / gpu_mgr 源码落点
-4. 最后处理 `.rodata` 字符串 patch 与代码 patch 的联动关系
+3. 再把 `_nv046497rm` 的报告写成“运行中修改 SWRL 配置限制被放宽”的业务故事线
+4. 再围绕 `_nv026411rm -> _nv032674rm` 调用链寻找 virtualization / gpu_mgr / grid_features 源码落点
+5. 把 `_nv032674rm` 的设备白名单语义与 `isGridLicenseSupported()` / 相关 capability gate 做对照
+6. 最后处理 `.rodata` 字符串 patch 与代码 patch 的联动关系
 
 ---
 
