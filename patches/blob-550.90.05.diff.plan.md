@@ -62,6 +62,175 @@
 
 如果分析过程中发现某个 hunk 必须借助其他补丁才能解释，会在正式文档中以“关联说明”的方式提及，但不展开成独立主线。
 
+### 2.4 当前已确认的技术事实（基于 IDA 与源码）
+
+以下内容是当前已经通过 IDA MCP 和本地源码检索确认、可直接作为正式分析起点的事实：
+
+#### A. IDA 实例与目标二进制已确认
+
+- 当前目标 IDA 实例端口：`10002`
+- 当前打开文件：`NVIDIA-Linux-x86_64-550.90.05-vgpu-kvm/kernel/nvidia/nv-kernel.o_binary`
+- `get_metadata` 返回 hash：
+  - `0884124c5e623e8c71779b20cf196176ba9dccc19024936b9fc5e23517f52d14`
+- 该 hash 与 `patches/blob-550.90.05.diff` 第一行完全一致，说明当前 IDA 打开的正是该 patch 对应的原始 blob。
+
+#### B. `blob-550.90.05.diff` 的结构已确认
+
+该文件不是 unified diff，而是仓库自定义的字节差分格式：
+
+- 第一行：原始文件 sha256
+- 中间若干行：`偏移: 原字节 新字节`
+- 最后一行：打补丁后的目标 sha256
+
+当前已识别到 5 组 patch 命中位置：
+
+- `0x000D65A4`
+- `0x0047CBB7`
+- `0x0047CC70`
+- `0x0051DDDB`
+- `0x02EADC58`
+
+#### C. diff 偏移到 IDA EA 的映射规律已初步确认
+
+当前已对多个 patch 点做了字节级验证，结果表明：
+
+- 对本文件而言，`blob-550.90.05.diff` 中记录的偏移，与 IDA 中 `nv-kernel.o_binary` 的 EA 之间，当前可见规律为：
+  - `IDA_EA = DIFF_OFFSET - 0x40`
+
+已验证样例：
+
+- `0x000D65A4 -> 0x000D6564`
+- `0x0047CBB7 -> 0x0047CB77`
+- `0x0047CC70 -> 0x0047CC30`
+- `0x0051DDDB -> 0x0051DD9B`
+- `0x02EADC58 -> 0x02EADC18`
+
+后续正式分析时，仍需把这一规律对所有 patch 字节再逐项复核一遍，并在正式文档中写明这是“文件偏移到装载地址的映射关系”，不要只把 diff 偏移误写成 IDA 地址。
+
+#### D. 目标 blob 的段布局已确认
+
+`nv-kernel.o_binary` 当前 IDA 段布局如下：
+
+- `.text`: `0x0 - 0xBEC164`
+- `.data`: `0xBEC180 - 0xC9FE10`
+- `.rodata`: `0xC9FE20 - 0x307EB80`
+- `.bss`: `0x307EB80 - 0x3139368`
+
+这意味着：
+
+- 前 4 个 patch 点落在 `.text`
+- 最后 1 个 patch 点落在 `.rodata`
+
+#### E. 当前已确认的函数级命中关系
+
+##### 1) `0x000D65A4 -> IDA 0x000D6564`
+
+- 所在函数：`_nv032674rm`
+- 函数范围：`0xD6560 - 0xD6CCA`
+- 推断签名：`__int64 __fastcall nv032674rm(__int64 a1)`
+- 当前已验证字节：
+  - IDA `0xD6564` 处字节为 `41 56 41 55 53 48 83 ED`
+  - 与 diff 中 `0x000D65A4` 开始的旧字节前缀一致
+- 该函数已知调用者之一：`_nv026411rm`，调用点 `0x51DE43`
+- 从 patch 字节形态看，该点很可能是把函数开头替换成“直接返回常量”的 early-return stub，需要在正式分析中重点确认其返回值语义与上游判断关系。
+
+##### 2) `0x0047CBB7 -> IDA 0x0047CB77`
+
+- 所在函数：`_nv046497rm`
+- 函数范围：`0x47CB60 - 0x47CC78`
+- 调用者：`_nv046455rm`，调用点 `0x477756`
+- 当前已验证字节：
+  - IDA `0x47CB77` 处字节为 `85 ED 0F 85 B1 00 00 00`
+- 当前可见 patch 形态表明：
+  - 该点会把一个 `test/jnz` 风格的条件分支改写为“清零寄存器 + NOP 掉跳转”的形式
+- `get_basic_blocks` 显示该 patch 点实际落在 basic block：
+  - `0x47CB60 - 0x47CB7F`，其中包含实际命中 EA `0x47CB77`
+- 同函数内后续还存在一个独立 basic block：
+  - `0x47CBB7 - 0x47CBD8`
+  - 该块不包含本 patch 命中地址，但可能属于同一逻辑链的后续路径，正式文档中需要与 `0x47CC30` 一并判断是否应作为关联证据引用
+
+##### 3) `0x0047CC70 -> IDA 0x0047CC30`
+
+- 仍位于函数：`_nv046497rm`
+- 当前已验证字节：
+  - IDA `0x47CC30` 处字节为 `41 BD 40 00 00 00 48 C7`
+- 该点与上一 patch 点明显属于同一函数内的同一逻辑链，应在正式文档中合并解释“为何需要两个 patch 点配合改变该控制流程”。
+
+##### 4) `0x0051DDDB -> IDA 0x0051DD9B`
+
+- 所在函数：`_nv026411rm`
+- 函数范围：`0x51DD40 - 0x51DF9D`
+- 推断签名：`__int64 __fastcall nv026411rm(__int64 a1, __int64 a2, int a3, int a4, int a5, int a6)`
+- 当前已验证字节：
+  - IDA `0x51DD9B` 处字节为 `85 C0 74 07 C7 45 0C 00`
+- 该函数的已确认 callee：
+  - `_nv032674rm`，调用点 `0x51DE43`
+  - `_nv026628rm`，调用点 `0x51DDE0`
+  - `_nv039914rm`
+  - `_nv039090rm`
+- 该函数会设置一组连续状态字节（反编译可见偏移 `a1 + 18010 ~ 18017` 一带），说明它很可能是“能力探测 / 状态聚合 / 特性结果回填”类函数，后续源码映射应优先在 virtualization / gpu_mgr 相关代码里搜索。
+
+##### 5) `0x02EADC58 -> IDA 0x02EADC18`
+
+- 落在 `.rodata`
+- 当前已验证字节：
+  - IDA `0x2EADC18` 处字节前缀为：`63 6F 75 6E 74 2E 0A 00`
+  - 即字符串尾部 `count.\n\0`
+- 这说明最后一个 patch 点不是代码，而是日志字符串本体的一部分。
+
+#### F. 已确认的源码高置信映射起点
+
+当前已经确认一组高置信映射，可作为正式文档优先落地的第一章：
+
+##### `_nv046497rm` 对应 `drivers/resman/src/physical/gpu/fifo/objsched.c`
+
+已确认依据：
+
+- IDA 字符串 `0x2EADBF0`：
+  - `"NVRM: Can't change software runlist max count.\n"`
+- IDA 字符串 `0x2EADC20`：
+  - `"NVRM: Software scheduler timeslice set to %uuS.\n"`
+- 对应 xref：
+  - `0x47CC36 -> 0x2EADBF0`
+  - `0x47CBF1 -> 0x2EADC20`
+- `stage_rel` 已确认源码位置：
+  - `drivers/resman/src/physical/gpu/fifo/objsched.c:3737-3817`
+- 该源码片段中同时出现：
+  - `portDbgPrintf("NVRM: Can't change software runlist max count.\n");`
+  - `portDbgPrintf("NVRM: Software scheduler timeslice set to %duS.\n", ...);`
+
+因此，`0x0047CBB7`、`0x0047CC70`、`0x02EADC58` 这三个 patch 点应优先作为一组联合分析对象处理。
+
+#### G. 当前正式分析的优先源码范围
+
+结合已有证据，后续源码映射优先级建议如下：
+
+1. `drivers/resman/src/physical/gpu/fifo/objsched.c`
+   - 已高置信命中 `_nv046497rm`
+   - 直接覆盖 3 个 patch 点
+
+2. `drivers/resman/src/kernel/virtualization/`
+   - 重点关注：
+     - `vgpu_mgr.c`
+     - `kernel_vgpu_mgr.c`
+     - `grid/grid_features.c`
+   - 主要用于给 `_nv032674rm` / `_nv026411rm` 寻找源码候选
+
+3. `drivers/resman/src/kernel/gpu_mgr/`
+   - 重点关注：
+     - `gpu_mgr.c`
+     - `gpu_group.c`
+   - 用于比对设备能力、状态聚合、设备 ID / 子设备 ID / policy 判定相关逻辑
+
+#### H. 对正式分析步骤的直接影响
+
+基于当前发现，后续执行不应再从“盲搜全仓库”开始，而应按以下顺序推进：
+
+1. 先把 5 个 patch 点全部换算为 `IDA_EA = DIFF_OFFSET - 0x40`
+2. 先完成 `_nv046497rm` 对 `objsched.c` 的完整地址级映射
+3. 再围绕 `_nv026411rm -> _nv032674rm` 调用链寻找 virtualization / gpu_mgr 源码落点
+4. 最后处理 `.rodata` 字符串 patch 与代码 patch 的联动关系
+
 ---
 
 ## 3. 正式文档的结构设计
