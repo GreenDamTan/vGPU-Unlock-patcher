@@ -53,8 +53,10 @@
 因此最终正式文档建议采用**按 patch family / hook family 展开**的结构：
 
 - 先讲 `nv_hooks.c` 的整体机制
-- 再按 `vup_hooks[]` 的每个 hook 项展开
-- 再按 `vup_patches[]` 的每个 patch 组展开
+- 再按 `NV_VGPU_KVM_BUILD` 主线展开：
+  - 先 `vup_hooks[]`
+  - 再 `vup_patches[]`
+- 再补 `NV_GRID_BUILD` 分支的 `general` 组与差异说明
 - 最后汇总成整体业务影响与复用指南
 
 如果后续发现某个 patch 组内部本身需要再细分为多个小 hunk，可在对应小节内部继续拆分。
@@ -105,9 +107,44 @@
 - 一部分是**静态可表达的直接 patch**
 - 另一部分是**动态注入型 patch recipe**
 
-### 2.5 当前已确认的技术事实（基于代码阅读）
+### 2.5 已确认的用户决策：分析顺序采用“先 KVM 后 GRID”
 
-以下内容是当前已经从 `nv_hooks.c` 和 `patch.sh` 直接确认、可作为正式分析起点的事实。
+你已经明确选择：`先 KVM 后 GRID`。
+
+因此这份计划与后续正式文档都应按以下优先级组织：
+
+1. **第一优先级：`NV_VGPU_KVM_BUILD` 主线**
+   - 作为正文主线展开
+   - 优先覆盖：
+     - `cudahost`
+     - `vupdevid`
+     - `klogtrace`
+     - `vgpusig`
+     - `kunlock`
+     - `qmode`
+     - `merged`
+     - `swrlwar`
+     - `fbcon`
+     - `sunlock`
+     - `gspvgpu`
+2. **第二优先级：`NV_GRID_BUILD` 补完线**
+   - 作为第二阶段或正文后半段展开
+   - 重点覆盖：
+     - `general`
+   - 主要回答：
+     - 它与 KVM 主线共用哪些 patch 思路
+     - 哪些 offset / 业务锚点可以直接复用
+     - 哪些行为是 GRID/general 特有的
+
+这意味着：
+
+- 计划中的第一轮 IDA 定位、源码映射、业务解释，应优先围绕 `NV_VGPU_KVM_BUILD` 分支进行
+- `NV_GRID_BUILD` 不忽略，但默认作为对照线、补完线或附录线来组织
+- 如果后续正式分析过程中发现某些关键落点两边完全一致，可以在正文里合并解释；否则应保持“先 KVM、后 GRID”的叙事顺序
+
+### 2.6 当前已确认的技术事实（基于代码阅读与首轮 IDA 采样）
+
+以下内容是当前已经从 `nv_hooks.c`、`patch.sh`、IDA 与 `stage_rel` 源码中确认、可作为正式分析起点的事实。
 
 #### A. `nv_hooks.c` 是运行时 blob hook 组件，而不是单纯辅助源码
 
@@ -242,7 +279,7 @@
 
 #### I. 当前已确认的 hook 项
 
-`vup_hooks[]` 目前包含以下 hook：
+`vup_hooks[]` 目前包含以下 hook；其中三处关键 hook 的 offset 与原始模板字节已经通过当前 IDA 中的 `nv-kernel.o_binary` 完成首轮验证。
 
 ##### 在 `NV_VGPU_KVM_BUILD` 下
 
@@ -329,6 +366,149 @@
 - 这些 patch 为何是运行时生效
 - 为什么 hook 的等效 patch 不能简单用离线 diff 表示完
 
+#### M. 双坐标系假设已经获得首轮 IDA 实证支持
+
+目前已经通过当前 IDA 实例中的 `nv-kernel.o_binary` 对两套 offset 坐标系做了抽样验证。
+
+##### 1) `vup_hook_info.offset` 直接映射到 blob EA
+
+当前已确认样例：
+
+- `0x0051E3A7` 处字节为：`4C 89 E0 44 89 FB`
+  - 与 `VUP_HOOK(... vupdevid ...)` 中的原始模板完全一致
+- `0x00016185` 处字节为：`48 81 ED 40 04 00 00`
+  - 与 `VUP_HOOK(... klogtrace ...)` 中的原始模板完全一致
+- `0x00416B9C` 处字节为：`41 80 BD 24 08 00 00 00`
+  - 与 `VUP_HOOK(... cudahost ...)` 中的原始模板完全一致
+
+这说明对当前版本而言，`vup_hook_info.offset` 可以直接当作 `blob` 基址下的相对地址来解释。
+
+##### 2) `vup_patch_item.offset` 仍符合 `offset - 0x40` 规则
+
+当前已确认样例：
+
+- `0x0051DDDE -> 0x51DD9E`，旧字节：`07`
+- `0x0051DDE2 -> 0x51DDA2`，旧字节：`00`
+- `0x0047CBBB -> 0x47CB7B`，旧字节：`B1`
+- `0x000D65C8 -> 0x0D6588`，旧字节：`75`
+- `0x000B3AD9 -> 0x0B3A99`，旧字节：`97`
+- `0x00033EE5 -> 0x033EA5`，旧字节首字节：`1B`
+
+这说明 `vup_patch_item` 至少在当前版本上，与 `blob-550.90.05.diff` 采用的是同一套 diff/文件偏移坐标规则。
+
+#### N. 三处 hook 的真实 IDA 落点已经确认，可作为正式分析第一优先级
+
+##### 1) `vupdevid` hook
+
+- offset：`0x0051E3A7`
+- 所在函数：`_nv026445rm`
+- 函数范围：`0x51E330 - 0x51E540`
+- 原始模板长度：6 字节
+- 被覆盖原始字节：`4C 89 E0 44 89 FB`
+  - 对应两条指令：
+    - `mov rax, r12`
+    - `mov ebx, r15d`
+- 运行时改写窗口：
+  - `offset + 0`：`90`
+  - `offset + 1`：`E8 <rel32-to-vup_hook_vupdevid_naked>`
+- `vup_hook_vupdevid_naked()` 末尾明确回放：
+  - `mov %r12, %rax`
+  - `mov %r15d, %ebx`
+
+这说明 `vupdevid` 是一个非常“干净”的运行时插桩例子：
+
+- 覆盖窗口短
+- 原始模板稳定
+- 被覆盖语义在 naked hook 内有直接一一回放
+
+因此它应成为正式文档里“hook 注入机制说明”的第一优先样例。
+
+##### 2) `klogtrace` hook
+
+- offset：`0x00016185`
+- 所在函数：`_nv039916rm`
+- 函数范围：`0x16170 - 0x16561`
+- 原始模板长度：7 字节
+- 被覆盖原始字节：`48 81 ED 40 04 00 00`
+  - 对应指令：`sub rbp, 0x440`
+- 运行时改写窗口：
+  - `offset + 0..1`：`90 90`
+  - `offset + 2`：`E8 <rel32-to-vup_hook_klogtrace_naked>`
+- `vup_hook_klogtrace_naked()` 末尾明确回放：
+  - `sub $0x440, %rbp`
+
+这说明 `klogtrace` 也属于“原始语义可直接回放”的 hook。
+
+从 helper 语义看，它更像一条**调试/可观测性插桩链**，而不是功能 unlock 主线。因此正式分析时可把它放在：
+
+- 机制说明中的高价值样例
+- 业务主线中的次优先项
+
+##### 3) `cudahost` hook
+
+- offset：`0x00416B9C`
+- 所在函数：`_nv036968rm`
+- 函数范围：`0x416AF0 - 0x416CDD`
+- 原始模板长度：8 字节
+- 被覆盖原始字节：`41 80 BD 24 08 00 00 00`
+  - 对应指令：`cmpb $0, 0x824(%r13)`
+- 运行时改写窗口：
+  - `offset + 0..2`：`90 90 90`
+  - `offset + 3`：`E8 <rel32-to-vup_hook_cudahost_naked>`
+- `vup_hook_cudahost_naked()` 末尾明确回放：
+  - `cmpb $0, 0x824(%r13)`
+- helper 会先取：
+  - `lea 0x50c(%rbx), %rdi`
+  - 再调用 `vup_hook_cudahost(u8 *flag)`
+
+这说明 `cudahost` hook 的关键点不是纯日志，而是：
+
+- 在原始比较发生前，先对某个对象字段进行可选回写
+- 再继续执行原本的条件比较
+
+因此它很可能是一个“在不完全重写控制流的前提下，先改状态，再让原逻辑自然生效”的 hook 模式样例。
+
+#### O. 已确认的重叠区域可以进一步细化为“相邻业务块”而不是泛泛相邻
+
+##### 1) `swrlwar` 与 software runlist 逻辑区重叠已得到字节级支持
+
+当前已确认：
+
+- `0x0047CBBB -> 0x47CB7B`，旧字节为 `B1`
+- `0x0047CC89 -> 0x47CC49`，旧字节为 `44`
+- `0x0047CC8A -> 0x47CC4A`，旧字节为 `89`
+- `0x0047CC8B -> 0x47CC4B`，旧字节为 `E8`
+
+这意味着 `swrlwar` 不只是“接近 `_nv046497rm`”，而是直接命中了此前 `blob-550.90.05.diff` 已分析过的同一函数 `_nv046497rm`：
+
+- `0x47CB7B` 落在原 `test/jnz` 所在早期块附近
+- `0x47CC49-0x47CC4B` 命中原本的 `mov eax, r13d`
+
+从字节替换看：
+
+- `44 89 E8` 被改成 `90 31 C0`
+- 等价于把“`mov eax, r13d`”改成“`nop; xor eax, eax`”
+
+这说明 `swrlwar` 极可能是在同一错误/返回路径上，把原本返回某个错误值的逻辑改成返回 `0`，正式分析时必须与先前 `_nv046497rm` 的 runlist/timeslice 结论联动解释。
+
+##### 2) `kunlock` 与 `_nv026411rm` 区域重叠已得到字节级支持
+
+当前已确认：
+
+- `0x0051DDDE -> 0x51DD9E`，旧字节 `07`
+- `0x0051DDE2 -> 0x51DDA2`，旧字节 `00`
+
+这与此前 `blob-550.90.05.diff` 对 `_nv026411rm` 的分析区完全重叠，说明 `kunlock` 不是泛泛“靠近 capability 聚合链”，而是直接落在同一能力聚合函数的同一 patch 子区域上。
+
+因此正式分析时，`kunlock` 应优先与：
+
+- `_nv026411rm`
+- `_nv032674rm`
+- `grid_features.c:isGridLicenseSupported()`
+- `gpu_mgr.c` / `grid_features.c` 的 capability state 消费链
+
+放在同一业务故事线中处理。
+
 ---
 
 ## 3. 正式文档的结构设计
@@ -350,7 +530,7 @@
 
 ### 3.2 文档主体：先分“机制层”，再分“项级层”
 
-建议文档主体采用以下顺序：
+建议文档主体采用以下顺序，并贯彻“先 KVM 后 GRID”：
 
 #### 第一部分：机制层说明
 
@@ -359,7 +539,13 @@
 - 为什么 `vup_hooks[]` 与 `vup_patches[]` 的 offset 坐标系不同
 - `vup_patching_start()` / `vup_patching_done()` 如何打开写保护并恢复
 
-#### 第二部分：`vup_hooks[]` 逐项分析
+#### 第二部分：`NV_VGPU_KVM_BUILD` 下的 `vup_hooks[]` 逐项分析
+
+建议优先顺序为：
+
+1. `vupdevid`（模板短、回放直接、和 capability/设备 ID 主线强相关）
+2. `cudahost`（会先修改状态字段，再继续原控制流）
+3. `klogtrace`（更偏调试/可观测性插桩）
 
 建议每个 hook 项统一采用以下模板：
 
@@ -406,7 +592,20 @@
 - 影响调用链
 - 潜在副作用
 
-#### 第三部分：`vup_patches[]` 逐组分析
+#### 第三部分：`NV_VGPU_KVM_BUILD` 下的 `vup_patches[]` 逐组分析
+
+建议优先顺序为：
+
+1. `kunlock`
+2. `swrlwar`
+3. `vgpusig`
+4. `merged`
+5. `qmode`
+6. `sunlock`
+7. `gspvgpu`
+8. `fbcon`
+
+其中前两组应优先，因为它们已经和既有 `blob-550.90.05.diff` 主分析链发生了可验证的重叠。
 
 建议每个 patch 组统一采用以下模板：
 
@@ -478,6 +677,8 @@
 对每个 hook 至少总结：
 
 - 原始模板字节
+- 模板长度 `n`
+- `call` 的理论起始位置 `offset + n - 5`
 - 被覆盖指令的语义
 - naked hook 中回放的关键指令
 - 调用前后寄存器约束
@@ -550,7 +751,7 @@
 
 ### 步骤 3：在 IDA 中定位全部目标点
 
-目标：把 hook offset 和 patch offset 都落到当前 `nv-kernel.o_binary` 中。
+目标：先把 `NV_VGPU_KVM_BUILD` 主线的 hook offset 和 patch offset 落到当前 `nv-kernel.o_binary` 中，再补 `NV_GRID_BUILD` 分支。
 
 需要完成：
 
@@ -573,6 +774,10 @@
 
 - 对每个 hook 统计 `pbytes` 长度
 - 计算 `NOP + CALL rel32` 的覆盖窗口
+- 对当前版本先固定三条已确认模板：
+  - `vupdevid`：6 字节窗口 -> `1 字节 NOP + 5 字节 CALL`
+  - `klogtrace`：7 字节窗口 -> `2 字节 NOP + 5 字节 CALL`
+  - `cudahost`：8 字节窗口 -> `3 字节 NOP + 5 字节 CALL`
 - 确认被覆盖原始指令是什么
 - 确认 `*_naked` 中如何回放被覆盖语义
 - 说明 call 目标为何不能直接静态固化成一个离线 diff
@@ -638,7 +843,7 @@
 
 ### 步骤 8：生成正式 Markdown 文档
 
-目标：把全部证据与结论写成可复查的最终文档。
+目标：按“先 KVM 后 GRID”的顺序，把全部证据与结论写成可复查的最终文档。
 
 需要完成：
 
@@ -695,8 +900,10 @@
 - 对直接 patch：列出 `offset / old / new`
 - 对 hook 注入：列出
   - 原始模板字节
+  - 模板长度 `n`
   - 覆盖窗口
   - `NOP*(n-5) + CALL rel32(vup_hook_*_naked)`
+  - call 起始偏移 `offset + n - 5`
   - 被覆盖指令回放位置
 
 ### 5.5 结论表达规则
