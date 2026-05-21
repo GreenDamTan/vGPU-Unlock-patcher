@@ -146,6 +146,185 @@
 
 以下内容是当前已经从 `nv_hooks.c`、`patch.sh`、IDA 与 `stage_rel` 源码中确认、可作为正式分析起点的事实。
 
+### 2.7 已提升为硬性要求：每一处被 hook 或 patch 的目标二进制函数，都必须落到 `stage_rel` 的源码文件与源码函数
+
+你这次新增的要求，需要在计划里明确提升成正式交付约束：
+
+- 不仅要定位每个 hook / patch item 命中的 **IDA 函数**
+- 还必须继续把这个 **IDA 函数** 对应到 `NVIDIA-Linux-x86_64-stage_rel` 里的：
+  - 源码相对路径
+  - 源码函数名
+  - 必要时的行号范围
+
+这条要求适用于两类对象：
+
+1. **被 hook 的函数**
+   - 例如 `vupdevid`、`klogtrace`、`cudahost` 命中的二进制函数
+2. **被 patch 的函数**
+   - 例如 `kunlock`、`swrlwar`、`merged`、`general` 等各组命中的二进制函数
+
+因此后续正式分析时，不能只写：
+
+- `offset -> _nvXXXXXrm`
+- `offset -> 某个源码逻辑簇`
+
+而必须优先收敛成：
+
+- `offset -> IDA 函数 -> stage_rel/xxx.c:源码函数`
+
+只有在公开源码里确实无法精确一一对应时，才允许退一步写成：
+
+- `offset -> IDA 函数 -> 最窄源码函数簇 / 最窄源码调用链`
+
+并且要在文档里明确说明：
+
+- 为什么无法继续收窄到单函数
+- 当前最接近的源码函数候选是谁
+- 哪些证据支持这一收敛
+
+### 2.8 当前已收敛的源码映射状态（第一版）
+
+下面这张表记录的是：截至本轮 IDA + `stage_rel` 联合阅读后，`nv_hooks.c` 里各 hook / patch 目标函数已经收敛到什么程度。
+
+#### A. 已经可以高置信写成“二进制函数 -> 源码函数”的项
+
+1. `swrlwar` 命中的 `_nv046497rm`
+   - 二进制函数：`_nv046497rm @ 0x47CB60`
+   - 高置信源码函数：
+     - `drivers/resman/src/physical/gpu/fifo/objsched.c:schedSwSwrlSetCountMax_IMPL`
+   - 主要证据：
+     - 直接命中 `Can't change software runlist max count` 与 `Software scheduler timeslice set to` 两条稳定日志
+     - 控制流与 `swrlCount` / `swrlCountMax` / timeslice 写回完全对齐
+
+2. `kunlock` / `general` 共享落点 `_nv032674rm`
+   - 二进制函数：`_nv032674rm @ 0x0D6560`
+   - 高置信源码函数：
+     - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:isGridLicenseSupported`
+   - 主要证据：
+     - 明确读取 `PCIDeviceID` / `PCISubDeviceID`
+     - 大量 device/subdevice 白名单分支
+     - 返回布尔支持态
+     - 被 GRID / licensing 能力链反复消费
+
+3. `general` 中的 `_nv045327rm`
+   - 二进制函数：`_nv045327rm @ 0xAF2B60`
+   - 高置信源码函数：
+     - `drivers/resman/arch/nvalloc/unix/src/os-hypervisor.c:rm_is_vgpu_supported_device`
+   - 主要证据：
+     - 直接出现 `NVRM: failed to map vGPU register!`
+     - 逻辑中直接检查 `os_is_grid_supported()`
+     - 调用者就是 `rm_is_supported_device`
+
+4. `fbcon` 命中的初始化主线函数
+   - 二进制函数：`_nv000720rm @ 0xAE9D20`
+   - 高置信源码函数：
+     - `drivers/resman/arch/nvalloc/unix/src/osinit.c:RmInitAdapter`
+     - 同函数内部直接覆盖 `RmSetupRegisters` 相关日志与错误路径
+   - 主要证据：
+     - 二进制中完整出现：
+       - `RmSetupRegisters`
+       - `Failed to map regs registers!!`
+       - `Failed to map hdacodec registers!!`
+       - `RmInitAdapter succeeded!`
+       - `RmInitAdapter failed!`
+     - 与 `osinit.c:1680-1740`、`2168-2699` 的初始化流程高度一致
+
+#### B. 已经可以高置信写成“二进制函数 -> 源码函数簇 / 源码调用链”的项
+
+1. `kunlock` 的核心聚合函数 `_nv026411rm`
+   - 二进制函数：`_nv026411rm @ 0x51DD40`
+   - 当前最窄源码函数簇：
+     - `drivers/resman/src/kernel/gpu_mgr/gpu_mgr.c:1206-1283`
+     - `drivers/resman/src/kernel/gpu_mgr/gpu_mgr.c:1772-1804`（`gpumgrStateLoadGpu`）
+     - `drivers/resman/src/kernel/gpu_mgr/gpu_mgr.c:1342-1372`（`gpumgrDetachGpu`）
+     - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:isGridLicenseSupported`
+     - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:gpuEnableGridFeature`
+     - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:disableAllGridLicensedFeatures`
+     - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:subdeviceCtrlCmdGpuGetLicensableFeatures_IMPL`
+   - 当前结论：
+     - 它已经明确落在一条“`isGridLicenseSupported()` -> capability 聚合 -> GRID feature state 消费”的调用链上
+     - 但当前还不建议把它误写成 `stage_rel` 中某一个单独公开函数的逐行直译
+
+2. `merged` 的 displayless 判定支线
+   - 二进制函数：
+     - `_nv032676rm @ 0x0B3A00`
+     - `_nv026510rm @ 0x4FA010`
+   - 当前最窄源码函数簇：
+     - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:disableAllGridLicensedFeatures`
+     - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:gpuEnableGridFeature`
+     - `drivers/resman/src/physical/gpu/gpu_branding.c:gpuDetectVgxBranding_IMPL`
+     - `drivers/resman/src/physical/gpu/gpu_branding.c:deviceCtrlCmdGpuGetBrandCaps_IMPL`
+     - 以及 `sdk/nvidia/inc/ctrl/ctrla080.h` / `ctrla083.h` 所对应的 GRID displayless 控制语义
+   - 当前结论：
+     - 这两处二进制函数已经明确挂在 `GRID / displayless / branding` 这条业务线上
+     - 其中 `_nv026510rm` 对 `RmForceGridDisplayless` 的直接检查，使它与 displayless 判定 helper 的关系非常强
+
+3. `vgpusig` 的 vGPU host/device 配置链
+   - 二进制函数：
+     - `_nv050770rm @ 0x0BBA40`
+     - 调用者 `_nv049279rm @ 0x5278F0`
+   - 当前最窄源码函数簇：
+     - `drivers/resman/src/kernel/virtualization/vgpu_mgr.c`
+     - `drivers/resman/src/kernel/virtualization/kernel_vgpu_mgr.c`
+     - 并与 `grid_features.c:subdeviceCtrlCmdGpuGetLicensableFeatures_IMPL` 中的 `licenseEdition / licensedProductName / signature` 语义相邻
+   - 当前结论：
+     - 这条链已经明确属于 `host vGPU device / type / config` 处理路径
+     - 但还需要继续把它收窄到 `vgpu_mgr.c` 或 `kernel_vgpu_mgr.c` 的具体单函数
+
+4. `general` 中的 `_nv028908rm`
+   - 二进制函数：`_nv028908rm @ 0x8DC670`
+   - 当前最窄源码函数簇：
+     - `drivers/resman/src/kernel/virtualization/grid/grid_features.c` 中与 `displayless`、`licensed max resolution`、`licensed num heads` 相关的控制路径
+   - 当前结论：
+     - 其字段语义已经明显靠近 GRID displayless capability / resolution / head-count 控制
+     - 但还需要继续收窄到单个控制函数
+
+#### C. 当前已经定位到二进制函数，但还要继续收窄到源码函数的项
+
+以下函数已经有稳定 IDA 落点，但在正式报告前，还要继续把它们压到更窄的 `stage_rel` 源码函数：
+
+1. `vupdevid`
+   - 二进制函数：`_nv026445rm @ 0x51E330`
+   - 当前线索：
+     - 被 `_nv026708rm` 调用
+     - 明确使用 device/subdevice 信息与静态表
+     - 与 `vgpu_mgr.c` / `kernel_vgpu_mgr.c` 中的 pGPU identity / migration encoding 语义相邻
+
+2. `klogtrace`
+   - 二进制函数：`_nv039916rm @ 0x16170`
+   - 当前线索：
+     - 明显属于一条 packet / trace / decode / dispatch 风格链
+     - 但暂时还没有在 `stage_rel` 中找到足够稳定的单函数源码锚点
+
+3. `cudahost`
+   - 二进制函数：`_nv036968rm @ 0x416AF0`
+   - 当前线索：
+     - 属于一条对象状态修改后再继续主逻辑的 helper 链
+     - 会与多个函数指针回调、错误打印和状态字节更新联动
+     - 但当前还需要继续收窄到具体源码函数
+
+4. `qmode`
+   - 二进制函数：`_nv026437rm @ 0x523C50`
+   - 当前线索：
+     - 明显是一条大量读取 registry key 并回填 `OBJGPU` 字段的初始化链
+     - 但 `stage_rel` 里公开源码暂未直接暴露这些同名 key 的文本形式，仍需继续收窄
+
+5. `sunlock`
+   - 二进制函数：
+     - `_nv019510rm @ 0x4F6C30`
+     - `_nv030355rm @ 0x0BEC40`
+     - `_nv030331rm @ 0x0BE480`
+   - 当前线索：
+     - 与 `isGridLicenseSupported()`、displayless / branding / capability state 消费链相邻
+     - 但三者各自的公开源码单函数还要继续细分
+
+6. `gspvgpu`
+   - 二进制函数：`_nv026896rm @ 0x33E70`
+   - 当前线索：
+     - 与一条布尔 capability helper 相关
+     - 且仓库源码里存在 `gsp.c` 对 displayless chip 的明确处理语义
+     - 但目前还不能直接写成某个已证实的单函数
+
 #### A. `nv_hooks.c` 是运行时 blob hook 组件，而不是单纯辅助源码
 
 - `patch.sh:675-681` 明确把它描述为：
@@ -576,11 +755,13 @@
 - 回放了哪些被覆盖语义
 
 ###### E. 源码映射
-- `stage_rel` 相对路径
-- 行号
+- 该 hook 命中的 **二进制函数名 / 地址**
+- 该二进制函数对应的 `stage_rel` **源码文件 + 源码函数名**
+- 必要时补行号范围
 - 代码节选
 - 映射依据
 - 置信度
+- 若无法收敛到单函数：说明当前最窄源码函数簇 / 调用链，以及不能继续收窄的原因
 
 ###### F. 等效 patch（双层）
 - 业务层等效 patch
@@ -628,10 +809,13 @@
 - 周边关键汇编
 
 ###### D. 源码映射
-- `stage_rel` 相对路径与行号
+- 每个 patch item 命中的 **二进制函数名 / 地址**
+- 该二进制函数对应的 `stage_rel` **源码文件 + 源码函数名**
+- 必要时补行号范围
 - 代码节选
 - 映射依据
 - 置信度
+- 若无法收敛到单函数：说明当前最窄源码函数簇 / 调用链，以及不能继续收窄的原因
 
 ###### E. 等效 patch（双层）
 - 业务层等效 patch
@@ -751,7 +935,7 @@
 
 ### 步骤 3：在 IDA 中定位全部目标点
 
-目标：先把 `NV_VGPU_KVM_BUILD` 主线的 hook offset 和 patch offset 落到当前 `nv-kernel.o_binary` 中，再补 `NV_GRID_BUILD` 分支。
+目标：先把 `NV_VGPU_KVM_BUILD` 主线的 hook offset 和 patch offset 落到当前 `nv-kernel.o_binary` 中，再补 `NV_GRID_BUILD` 分支，并为后续源码映射准备“函数级落点”。
 
 需要完成：
 
@@ -760,11 +944,16 @@
   - hook offset 是否可直接落到 blob EA
   - patch offset 是否需按 `offset - 0x40` 转换
 - 记录命中函数、basic block、周边汇编
+- 对每个目标点至少先收集：
+  - 二进制函数名
+  - 函数范围
+  - 调用者 / 被调者线索
 
 输出物：
 
 - hook -> IDA 地址映射表
 - patch item -> IDA 地址映射表
+- 目标点 -> 二进制函数映射表
 
 ### 步骤 4：分析 hook 注入的字节级等效 patch
 
@@ -812,16 +1001,23 @@
 
 ### 步骤 6：在 `stage_rel` 中建立源码映射
 
-目标：从 IDA 逻辑反推或比对到源代码位置。
+目标：从 IDA 逻辑反推或比对到源代码位置，并尽可能把**每一处被 hook 或 patch 命中的二进制函数**落到 `stage_rel` 的**源码文件 + 源码函数**。
 
 需要完成：
 
 - 在 `stage_rel` 中搜索相关字符串、条件、调用链、状态位写回模式
-- 为每个 hook / patch 组寻找最可能的源码路径与行号
+- 先为每个目标点确认：
+  - 命中的二进制函数是谁
+  - 该二进制函数最可能对应哪个源码文件 / 源码函数
+- 对每个 hook / patch 组，汇总其内部所有 target function 的源码归属
+- 若公开源码里无法精确到单函数：
+  - 收敛到最窄源码函数簇 / 调用链
+  - 明确为什么不能继续收窄
 - 对映射打上置信度标签
 
 输出物：
 
+- target function -> 源码文件 / 源码函数 / 置信度表
 - hook / patch group -> 源码路径 / 行号 / 置信度表
 
 ### 步骤 7：解释 patch 前后逻辑变化
@@ -843,12 +1039,16 @@
 
 ### 步骤 8：生成正式 Markdown 文档
 
-目标：按“先 KVM 后 GRID”的顺序，把全部证据与结论写成可复查的最终文档。
+目标：按“先 KVM 后 GRID”的顺序，把全部证据与结论写成可复查的最终文档，并落实“每一处目标函数都要对应到源码函数”的要求。
 
 需要完成：
 
 - 先写机制层，再写项级层
 - 对所有等效 patch 都坚持双层表达
+- 对每个 hook / patch 组明确列出：
+  - 命中的二进制函数
+  - 对应的源码文件 / 源码函数
+  - 如果只能落到源码函数簇，也要解释原因
 - 标清直接证据、关联证据、推断结论
 - 加入整体总结与复用指南
 
@@ -964,12 +1164,13 @@
 
 1. `vup_hooks[]` 与 `vup_patches[]` 的所有分析对象都已编号并说明
 2. 每项都给出 IDA 地址定位结果
-3. 每项都尽量给出源码相对路径与行号
-4. 每项都给出双层等效 patch 说明
-5. 每项都解释了 patch 前后行为变化
-6. 文档中所有关键汇编都附地址
-7. 对不确定映射明确标注了置信度
-8. 最终有整体作用总结与复用指南
+3. 每一处被 hook 或 patch 命中的二进制函数，都尽量给出对应的 `stage_rel` 源码文件与源码函数
+4. 若无法对应到单函数，明确给出最窄源码函数簇 / 调用链与原因
+5. 每项都给出双层等效 patch 说明
+6. 每项都解释了 patch 前后行为变化
+7. 文档中所有关键汇编都附地址
+8. 对不确定映射明确标注了置信度
+9. 最终有整体作用总结与复用指南
 
 ---
 
