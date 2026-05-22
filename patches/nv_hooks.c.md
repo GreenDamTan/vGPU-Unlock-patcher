@@ -48,6 +48,48 @@
 - 哪些业务链与 `blob-550.90.05.diff` 的静态 patch 重叠；
 - 在重叠区域里，二者分别改了控制流的哪一层。
 
+## 1.1 从业务角度看，`nv_hooks.c` 一共在动哪几条链
+
+如果不先把业务链分开，`nv_hooks.c` 很容易被看成“到处改几字节”。但把所有点位放回 RM 的真实职责后，它主要是在同时改 8 条链：
+
+1. **宿主卡身份链**
+   - 代表点：`vupdevid`、`kunlock` 中 `_nv032674rm` 周边项。
+   - 业务问题：RM 先判断“这张宿主卡到底是谁”，再决定它能不能被视为 GRID / vGPU 软件许可对象，以及它在 migration / profile / branding 上属于哪一类。
+
+2. **vGPU profile 导入链**
+   - 代表点：`vgpusig`。
+   - 业务问题：即使前面放宽了“这卡支持不支持”，如果 host 侧根本没把某条 `vgpuType` 导入进 RM，可创建 profile 列表仍然是空的或不完整的。
+
+3. **licensed feature 与 capability 聚合链**
+   - 代表点：`kunlock`。
+   - 业务问题：RM 不只是做一次白名单判断，还会把结果折叠成 `gridLicensedFeatures`、feature code、license state、displayless 派生状态等一组对象字段，供后续所有控制命令消费。
+
+4. **启动期运行模式底座链**
+   - 代表点：`qmode`。
+   - 业务问题：在很多 unlock 场景里，真正卡住流程的不是某个单点 capability，而是 RM 初始化阶段仍然过于保守，导致一堆 override、debug、compatibility 模式没真正落到 `OBJGPU` 状态上。
+
+5. **GRID displayless class 链**
+   - 代表点：`merged`、`general`。
+   - 业务问题：这条链决定当前板卡能不能被当成 `NVA083_GRID_DISPLAYLESS` 那种“无物理显示但仍需提供显示相关 vGPU 能力”的对象来对待。
+
+6. **unlicensed state machine / 降级状态消费链**
+   - 代表点：`sunlock`、`general`。
+   - 业务问题：即使前面通过了 licensing / displayless 判定，后续状态机、模式码、输出结构写回仍可能把结果重新压回保守态。
+
+7. **host CUDA / CUDA limit 链**
+   - 代表点：`cudahost`。
+   - 业务问题：merged 驱动不仅要保住 guest 侧 vGPU，还要尽量不丢宿主机侧 CUDA / compute 相关能力；这一类点位更像“在原控制流继续前，先把宿主状态修成目标值”。
+
+8. **宿主调度与 GSP 兼容链**
+   - 代表点：`swrlwar`、`gspvgpu`、`fbcon`、`klogtrace`。
+   - 业务问题：前两类解决的是“能不能继续”，后两类解决的是“继续之后会不会因为调度、displayless、GSP、观测性不足而马上撞墙”。
+
+从这个角度看，`nv_hooks.c` 并不是一个单目的补丁，而是：
+
+- 先让 RM **承认这张卡、承认这组 profile、承认这条 licensed/displayless 路径**；
+- 再让 RM **在真正初始化、运行、调度和 GSP 路径里别自己把这些结果又关掉**；
+- 最后补上一点 **可观测性**，确保这些链条在出问题时至少还能看见内部状态。
+
 ---
 
 ## 2. 证据基础与坐标系
@@ -326,13 +368,18 @@ static NV_STATUS CustomChipInfoGetNameAscii(OBJGPU *pGpu, NvU16 devId, NvU16 gpu
 - 若按业务职责看，更接近 `vgpu_mgr.c / kernel_vgpu_mgr.c` 的 pGPU identity / migration 编码语义；
 - 若按二进制“查静态表、输出短结果块”的形状看，则又与 `gpu_name.c` 的 `ChipInfoGetNameAscii / CustomChipInfoGetNameAscii` 这类 helper 有相似性；
 - 因此当前还不建议把 `_nv026445rm` 直接写成某一个公开函数的 100% 逐行直译。
+- 但从 caller 关系看，它的位置已经很清楚：`_nv026708rm` 会在设备初始化中先跑一串 capability / mode 检查，再调用 `_nv026445rm`，然后继续执行覆盖表、override 与后续对象初始化 helper。这说明 `vupdevid` 改的是**初始化中段的身份传播点**，不是最终展示层或最终控制命令层。
 
 ### E. 双层等效 patch
 
 **业务层等效 patch：**
 
 - 将原本从 RM 内部对象状态读取出来的 device ID / subdevice ID，改造成“可由模块参数强制覆写的设备身份”。
-- 这会影响后续所有依赖 pGPU 身份做判断、编码、兼容分组或 profile 选择的路径。
+- 它影响的不只是一个局部分支，而是整条 **宿主卡身份传播链**：
+  1. RM 先决定“当前 pGPU 叫什么、属于哪一组设备身份”；
+  2. 再决定这张卡是否能和某些 vGPU type / migration 兼容组对上；
+  3. 再把这些身份结果继续传播到 profile 选择、兼容分组、licensed product 命名、甚至某些 branding / displayless 派生逻辑。
+- 因此 `vupdevid` 的真正业务作用不是“把一个寄存器改一下”，而是把 **后续所有基于 pGPU 身份做出的业务决策** 都切换到另一张卡的视角下执行。
 
 **字节 / 插桩层等效 patch：**
 
@@ -346,12 +393,41 @@ static NV_STATUS CustomChipInfoGetNameAscii(OBJGPU *pGpu, NvU16 devId, NvU16 gpu
 **patch 前：**
 
 - 该路径使用真实的设备 / 子设备标识继续后续逻辑；
-- 设备身份是否属于受支持组合，由下游静态表或 capability 路径决定。
+- 在业务流程里，它通常发生在 **设备初始化已经完成基本 attach、开始派生 pGPU identity / name / encoding** 的阶段；
+- 这意味着后面接它的不是单一判断，而是一串“基于宿主卡身份生成可消费元数据”的路径：
+  - 设备名字 / 品牌字符串；
+  - pGPU 的 migration / equivalency 编码；
+  - 某些 vGPU type 对宿主卡身份的兼容约束；
+  - 再往后是 licensed product 命名与 profile 家族归属。
+- 因此，原始逻辑下如果真实 `device id / subdevice id` 不在预期组合里，后果常常不是立刻报错，而是后续整条链都按“这不是目标宿主卡家族”的前提继续计算。
 
 **patch 后：**
 
 - 可以直接把某张卡伪装成另一张卡的 `device id`；
 - 这会改变后续 profile / 迁移兼容 / 能力白名单等基于身份的行为。
+- 更具体地说，后续链条里至少有三类结果会跟着变：
+  1. **host 侧 profile 可接受性**
+     - 某些原本只对特定 pGPU 身份开放的 `vgpuType`，更容易被当成“属于兼容对象”；
+  2. **migration / equivalency 编码**
+     - `vgpuMgrGetPgpuDevIdEncoding()` / `vgpuMgrGetPgpuSubdevIdEncoding()` 一类路径看到的是伪装后的身份；
+  3. **branding / licensing 派生路径**
+     - 后面的 `isGridLicenseSupported()`、displayless、licensed product 命名也可能连带改变。
+- 所以 `vupdevid` 的可见结果，往往不是某个单独日志变化，而是 host 和 guest 两边对“这张宿主卡属于哪个 profile 家族”的认识一起变化。
+- 从调用链位置看，这个改写发生在 caller `_nv026708rm` 的中前段，而 `_nv026708rm` 在后面还会继续做更多对象初始化、状态设置和 helper 调用。也就是说，`vupdevid` 改的不是一个最终展示字段，而是**在更后续的初始化和派生流程开始之前，先把宿主卡身份底稿改掉**。
+- `_nv026708rm` 在调用 `_nv026445rm` 之后，还会继续执行额外的对象初始化、override 检查、feature helper 以及进一步的状态设置，因此这里改掉的身份会沿着后续整条初始化链继续传播，而不是只影响一个局部 helper。
+- 这类改写最直接的外部效果不是“名字变了”，而是：
+  - host 在后面做 `vgpuType` 兼容检查时，会按另一张卡的家族去判断；
+  - migration / equivalency 编码也会按另一张卡的身份去生成；
+  - guest 侧最终看到的可创建 profile 集合，本质上也会跟着这份被伪装过的宿主身份一起变化；
+  - 某些随后才会发生的 feature 初始化或 override 应用，也会默认把这张卡当成伪装后的目标宿主卡去处理。
+- 更具体地说，源码里的：
+  - `vgpuMgrCreateRequestVgpu()` / `kvgpumgrCreateRequestVgpu()`
+  - `vgpuMgrCheckVgpuTypeCreatable()` / `kvgpumgrCheckVgpuTypeCreatable()`
+  - `vgpuMgrGetCreatableVgpuTypes()` / `kvgpumgrGetCreatableVgpuTypes()`
+  这类路径最终决定了 host 当前会把哪些 `vgpuTypeId` 视为可创建对象；而这些路径前面依赖的 pGPU identity / encoding 一旦被 `vupdevid` 改写，guest 侧最终能看到的 profile 集合就会跟着漂移。
+- 也就是说，`vupdevid` 的最终业务效果很像：
+  - 先改“这张宿主卡在 RM 眼里是谁”；
+  - 再让后续所有“这张卡能不能承接哪些 profile” 的判断一起跟着改。
 
 ---
 
@@ -484,6 +560,10 @@ nvlogPrint_vprintf
 **patch 后：**
 
 - 可以通过 `dmesg` / `kern.log` 观察到 `NVTRACE %06x:%04x %04x%02x` 形式的运行时事件。
+- 这条 hook 的真正价值，不在于直接改变 host/guest 功能，而在于它给前面这些复杂链条补了一个**运行时观察窗**：
+  - 当 profile 导入、license state、displayless、GSP 或 runlist 相关路径出现异常时，可以更容易看到 RM 内部到底走到了哪类 packet / event；
+  - 当 guest 侧只表现成“创建 profile 失败 / mdev 不出现 / 启动后能力异常”时，宿主侧终于有机会把失败点缩到具体 packet/trace 类型，而不是只能看最终报错。
+- 因此它更像一条“让后续深挖和复用更可操作”的辅助业务链，而不是解锁本身的主动作点。
 
 ---
 
@@ -633,6 +713,10 @@ perfCudaLimitEvaluateLimit_IMPL
 
 - 可以在分支判断前先改写该 flag；
 - 从而把原本由运行时状态决定的分支，变成可由模块参数影响的行为。
+- 这对 merged driver 很关键，因为它意味着：
+  - host 侧 CUDA / compute 相关限制不一定会因为同时引入 GRID/vGPU 语义而被动触发；
+  - 某些本应只在“非 CUDA host”场景下走的保守路径，可以被挡在更前面；
+  - 最终表现为：同一个 merged 包在保留 guest 能力的同时，更有机会继续保住宿主机侧 CUDA/compute 工作流。
 
 ---
 
@@ -679,8 +763,12 @@ static struct vup_patch_item vup_diff_vgpusig[] = {
 更稳妥的表述是：
 
 - `vgpusig` 高置信落在一条 host-vGPU 配置 / type / identity 处理链上；
-- 它与 `grid_features.c` 中 `subdeviceCtrlCmdGpuGetLicensableFeatures_IMPL` 所处的“licenseEdition / licensedProductName / signature”业务域相邻；
-- 但当前还没有足够证据把 `_nv050770rm` 压到 `vgpu_mgr.c` / `kernel_vgpu_mgr.c` 中某一个公开函数。
+- 它最接近的公开源码函数，其实已经可以进一步收窄到：
+  - `drivers/resman/src/kernel/virtualization/vgpu_mgr.c:424-476` `vgpuMgrCreateVgpuType`
+  - `drivers/resman/src/kernel/virtualization/vgpu_mgr.c:500-589` `vgpuMgrPgpuAddVgpuType`
+  - 以及 `kernel_vgpu_mgr.c` 中的同职责版本；
+- 这些函数会真正把 `vgpuType`、`maxInstance`、`numHeads`、`maxResolutionX/Y`、`maxPixels`、`frlConfig`、`cudaEnabled`、`license`、`licensedProductName` 等字段挂进 RM 的可用 type 列表；
+- 因此 `_nv050770rm` 更像是“在 type 进入 `vgpuMgrCreateVgpuType()` 之前的单条 profile 合法性门”，而不是抽象的任意布尔校验。
 
 ### D. 双层等效 patch
 
@@ -698,11 +786,24 @@ static struct vup_patch_item vup_diff_vgpusig[] = {
 
 **patch 前：**
 
-- 该路径依据原始校验结果决定条目是否有效。
+- 这条链本质上是 **host 侧导入 / 注册 vGPU type** 的入口之一：上游 `vgpud` / XML 解析器先把 `vgpuType`、`maxPixels`、`frlConfig`、`license`、`cudaEnabled` 等字段整理成 `NVA081_CTRL_VGPU_INFO` 风格记录，再由 RM 侧循环导入。
+- `_nv049279rm` 负责批量吃这些记录，`_nv050770rm` 更像“校验并落单条 profile”的内部 helper。
+- 如果这条校验链失败，后果不是简单的一个布尔失败，而是：
+  - 某个 vGPU type 不会被加入 host 的可用 type 列表；
+  - 后续 `vgpuMgrCreateVgpuType()` / `vgpuMgrPgpuAddVgpuType()` 不会看到这条 profile；
+  - 再往后 guest 可创建的 profile、licenseEdition、licensedProductName、maxInstance、FRL 等能力都会缺失。
 
 **patch 后：**
 
-- 这项判断被改写为更宽松的形式，降低了配置签名 / 条目合法性对后续流程的阻断力度。
+- 这项判断被改写为更宽松的形式，等价于降低“单条 vGPU type 记录必须完全满足某个内部校验”的严格度。
+- 业务上，它更接近：
+  - **让 host 更容易接受 vGPU profile 描述记录本身**；
+  - 从而让本来会被拒掉的 `vgpuType` 仍能被挂进 `vgpuMgrCreateVgpuType()` / `vgpuMgrPgpuAddVgpuType()` 管理的 type 列表；
+  - 进而影响 guest 侧最终能看到哪些 profile、license 名称、分辨率/像素上限、FRL、CUDA 能力以及可创建实例数。
+- 这意味着 `vgpusig` 影响的是 unlock 链里非常靠前的一步：
+  - **profile 有没有被 host 收下**；
+  - 而不是 profile 收下之后怎么显示。
+- 换句话说，`vgpusig` 不是直接“开功能”，而是先放宽 **profile 元数据导入** 这道门。没有这一步，很多后面的 displayless、licensed feature、migration、CUDA 等调整根本没有对象可作用。
 
 ---
 
@@ -831,14 +932,29 @@ if (isGridLicenseSupported(pGpu))
 
 **patch 前：**
 
-- 设备白名单不通过时，会被卡在支持判定链；
-- 某些 capability 聚合输入失败时，会导致最终状态字节保持 0。
+- `kunlock` 命中的并不是一条单独的“是否支持”判断，而是一条从 **设备身份识别** 贯穿到 **licensed feature 状态聚合** 的长链：
+  1. `_nv032674rm` 这类 helper 先判断当前 `PCIDeviceID / PCISubDeviceID` 是否属于 NVIDIA 官方认可的 GRID/vGPU 软件许可对象；
+  2. `gpu_mgr.c` 的 attach/load 路径再把 `gridLicensedFeatures`、`featureCode`、`license state` 等状态挂进 `OBJGPU`；
+  3. `grid_features.c` 再基于这些状态决定：
+     - guest 能不能看到 vGPU / Quadro / Gaming / Compute licensable feature；
+     - baremetal / NMOS 能不能进入 unlicensed state machine；
+     - displayless 降级路径、licensed num heads、max resolution、max pixels 应该怎么设置。
+- 因此，原始逻辑一旦在前面某个 helper 里给出“这张卡不支持”或“某个 capability bit 为 0”，后面的整条 licensing / displayless / feature 链都会变得保守：
+  - `subdeviceCtrlCmdGpuGetLicensableFeatures_IMPL()` 返回的 feature 列表更少；
+  - `gpuEnableGridFeature()` / `disableAllGridLicensedFeatures()` 走向更保守的状态；
+  - unlicensed state machine 可能根本不会启动，或者启动后状态更受限；
+  - 某些 displayless / migration / branding 消费链也会因此继续拒绝当前板卡。
 
 **patch 后：**
 
-- 设备身份白名单更容易通过；
-- capability 聚合中的部分输入被强制推向真值；
-- 上层 licensing / feature / displayless / migration 等依赖状态会更“乐观”。
+- `kunlock` 做的不是“把一个 if 改成 true”这么简单，而是同时把这条长链的 **上游身份门** 和 **中游 capability 聚合门** 一起抬高为更乐观的结果。
+- 业务上的连锁效果是：
+  - 本来不在官方 GRID/vGPU licensing 白名单里的 SKU，更容易被后续逻辑视为“许可链可继续”；
+  - `OBJGPU` 上的 `gridLicensedFeatures` 及其周边布尔状态更容易呈现为“支持 / 已启用 / 可发布”；
+  - `grid_features.c` 对 licensable features、unlicensed 模式降级、displayless 派生能力的后续计算都会建立在更乐观的输入之上。
+- 对 vGPU unlock 来说，`kunlock` 的意义在于：
+  - 它不是直接生成某个 guest profile；
+  - 而是让 **“这张宿主卡可不可以被当成 GRID / vGPU 软件许可对象”** 这件事，更早、更广泛地通过，从而给后续所有 feature / displayless / migration 铺路。
 
 ---
 
@@ -934,11 +1050,31 @@ gpuInitRegistryOverrides_IMPL
 
 **patch 前：**
 
-- GPU 初始化时严格按 registry 解析结果回写状态。
+- `qmode` 所在链路是典型的 **GPU 启动期 registry override 汇总器**：它不直接决定某个 vGPU feature 是否可见，而是决定 RM 初始化后，`OBJGPU` 身上有哪些“偏实验 / 偏调试 / 偏放宽”的运行模式会被打开。
+- 这些 key 覆盖的业务面其实很广：
+  - `OverrideGpuInit`：影响寄存器 / instmem 初始化覆盖表；
+  - `RMDisableFeatureDisablement`：影响是否跳过某些 feature disablement；
+  - `RMGpuCacheOnly`：影响 cache-only mode；
+  - `RMEnableReplayable`：影响 replayable trace / fault 相关路径；
+  - 再加上 power / bandwidth / clock / registry cache / display mux 等一整串初始化状态。
+- 这条链的上游输入其实非常朴素：
+  - OS / registry 提供一串 override key；
+  - `gpuInitOverridesFromRegistry()` 和 `gpuInitRegistryOverrides_IMPL()` 把它们逐条折叠成 `OBJGPU` 成员字段。
+- 但它的下游消费非常广：
+  - 这些字段会在后面的 display、power、CUDA、GSP、fault、RC recovery、甚至 profile 兼容路径里被继续读取。
+- 所以原始逻辑如果更保守，就意味着：
+  - RM 启动后仍然更接近默认官方配置；
+  - 某些为实验、调试、兼容 consumer/非标准板卡而准备的 override 不容易真正变成对象状态。
 
 **patch 后：**
 
-- 某个 override 分支的条件阈值被放宽，导致后续对象状态更偏向开启态。
+- `qmode` 的真正业务意义，是让这条“初始化 override 汇总器”对某类条件更宽容，从而更容易把某些 override 变成 `OBJGPU` 上的最终状态。
+- 对 unlock 主线的价值不在于它单独开启了 vGPU，而在于它降低了 RM 启动阶段的保守性：
+  - 让后续 licensing / displayless / CUDA / GSP / 调试路径更容易在一个“已经放宽约束”的 GPU 对象上继续运行；
+  - 减少某些默认 feature disablement 或默认保守初始化对后续 patch 链的反作用。
+- 从最终结果看，`qmode` 更像一个 **启动期模式底座补丁**：
+  - host 侧启动出来的 RM 对象更接近“愿意配合 unlock 的形态”；
+  - guest 侧后面能看到的 feature / profile / displayless 能力，也更少被前面的默认保守初始化提前压掉。
 
 ---
 
@@ -1103,11 +1239,23 @@ if (status == NV_OK)
 
 **patch 前：**
 
-- displayless / branding / GRID capability 依赖真实品牌和 licensed feature 状态。
+- `merged` 所在的不是单纯“是否支持”的抽象判断，而是 **是否允许创建 / 暴露 `NVA083_GRID_DISPLAYLESS` 这条类与能力路径**。
+- 在官方逻辑里，这条路径要求几件事同时成立：
+  - 当前 GPU 不能被系统当成已有正常 display engine 的板卡；
+  - 它要么天然 `bGridCapable`，要么是 `bGridswOnQuadroSupported`，要么显式被 `RmForceGridDisplayless` 打开；
+  - 后续还要把 licensed num heads / max resolution / max pixels 这些 displayless 派生能力写回对象状态。
+- 这意味着对 merged driver 来说，原始逻辑的约束其实非常强：
+  - 如果 host 侧把卡看成普通显示卡，就不会走 GRID_DISPLAYLESS；
+  - 如果 licensing / branding 不满足，displayless 这条支线也会被关掉；
+  - 最终 guest 侧与 host 侧需要的那组“无物理显示、但仍要提供 vGPU 显示相关 profile 能力”的状态就建立不起来。
 
 **patch 后：**
 
-- merged driver 更容易在同一安装包里同时保留 host / GRID 两边需要的 capability 状态。
+- `merged` 的业务意义，是把这条 `GRID_DISPLAYLESS` 支持链从“只给官方 GRID / 少数受支持板卡使用”，改成“在 merged driver 场景下更容易被保留下来”。
+- 更具体地说，它是在帮 merged driver 同时保住两边语义：
+  - **host 侧**：仍然保留原本的 CUDA / OpenGL / console / 初始化链；
+  - **guest / GRID 侧**：仍然能得到 displayless class、licensed heads / resolution / pixels 这组派生能力。
+- 所以 `merged` 的真正业务作用不是“再多开一个功能”，而是让 merged 产物不要在 host 语义和 GRID displayless 语义之间二选一。
 
 ---
 
@@ -1196,6 +1344,12 @@ xor eax, eax
 
 - 运行中也可继续改 `swrlCountMax`；
 - timeslice / ARR 相关后续流程继续执行。
+- 这对业务层的意义不是“日志不报错了”这么简单，而是会直接影响 **宿主机 software runlist scheduler 对多 VM / 多 vGPU 的承载策略**：
+  - `PVMRL` 相关设置不再要求先停掉当前 software runlist；
+  - 已经在跑的 VM/vGPU 组合，也能在运行中被重新分配 `swrlCountMax` 与 timeslice；
+  - 对最终行为的影响会体现为：可支持的并发 VM 数、每个 VM 的轮转时间片、以及在高负载下 guest 侧感受到的调度公平性和响应性都会变化。
+- 对 unlock 场景来说，它解决的是“前面的 profile 和 licensing 都放开了，但宿主调度器还不允许按目标方式承载这些实例”这个更靠后的瓶颈。
+- 换成更直观的话说：`swrlwar` 影响的不是 guest 能不能看到 profile，而是 guest 真创建出来以后，宿主还能不能以目标方式把这些实例调度起来。
 
 ---
 
@@ -1274,10 +1428,19 @@ NvBool RmInitAdapter(
 **patch 前：**
 
 - 初始化主链严格按原 display / console 相关状态推进。
+- 这条链发生得非常早：在 `RmInitAdapter()` 里，很多更靠后的 licensing / displayless / GSP / profile 逻辑都还没开始，它就已经决定了显示相关对象要按哪条路径建起来。
 
 **patch 后：**
 
-- 某个条件分支被改写后，初始化阶段对 `fbcon` / displayless 的处理更接近 vGPU unlock 目标。
+- 某个条件分支被改写后，初始化阶段对 `fbcon` / displayless` 的处理更接近 vGPU unlock 目标。
+- 这类点在业务上很重要，因为它影响的是 **RM 启动早期“显示相关对象到底按哪条世界观初始化”**：
+  - 是按“这是一张正常有显示控制器的宿主卡”继续走；
+  - 还是按“这张卡需要让 displayless / GRID 派生路径继续保留”去走。
+- 对 merged 驱动而言，这类初始化差异最终会反映到：
+  - host 侧 console / display common 路径是否还能保住；
+  - 同时 guest 侧需要的 displayless / GRID 派生能力是否不会在最早期就被剪掉。
+- 所以 `fbcon` 这组虽然只有 1 字节，但它干预的是**初始化时的站位选择**，而不是后面某个小功能开关。
+- 如果这个阶段站错位，后面即使 `kunlock` / `merged` / `general` 都放开了，也可能因为显示世界观一开始就错了，导致 host/guest 只保住一边。
 
 ---
 
@@ -1323,7 +1486,13 @@ NvBool RmInitAdapter(
 更稳妥的结论是：
 
 - `sunlock` 不是单点 patch，而是一组围绕“是否支持 GRID / 是否 displayless / 是否许可路径可用”的状态消费补丁；
-- 它与 `kunlock` 的上游支持判定链相互配合。
+- 它和 `grid_features.c:subdeviceCtrlCmdGpuGetGridUnlicensedStateMachineInfo_IMPL`、`subdeviceCtrlCmdGpuEnableGridLicense_IMPL`、`gridlicmgrUpdateGpuLicenseState()`、`gridlicmgrSetLicenseStateOnHost_Wrapper()` 这一组控制命令 / 状态同步函数处在同一业务域；
+- 同时，它最终还会体现在一组公开 getter / 查询面上，例如：
+  - `gpuGetGridEnabledFeature()`
+  - `gpuGetIsGridLicensed()`
+  - `gpuGetIsGridUnlicensedTesla()`
+- 换句话说，它更接近“license state / unlicensed state machine / host 可见状态”的消费与回写层，而不是最上游的支持白名单层。
+- 更具体地说，源码里 `gridlicmgrSetLicenseStateCapabilitiesToHost()` 会把 `licenseState`、`fpsValue`、`licenseExpiryTimestamp`、`licenseExpiryStatus` 以及 `bvGPUDegradationDisable` 一并打包，再通过 `vgpuSetLicenseInfo()` 同步给 host；这正说明 `sunlock` 所影响的不是抽象布尔量，而是最终会被 host/guest 共同观察到的一组 license / degradation 状态。
 
 ### D. 双层等效 patch
 
@@ -1347,11 +1516,51 @@ NvBool RmInitAdapter(
 
 **patch 前：**
 
-- 多条中下游状态消费链仍可能因为 branding / displayless / capability 组合不满足而退回。
+- `sunlock` 这组 patch 所在的位置，已经不是最上游的“这卡支不支持”判断，而是 **更靠后的状态消费链**：
+  - 有的地方在把 displayless / capability 组合映射成 `0/1/2/3/4` 这类模式码；
+  - 有的地方在把 enable/license 结果写回某个输出结构；
+  - 有的地方在把这些结果继续挂接到 vGPU / GRID 管理结构里。
+- 换句话说，到了 `sunlock` 这一步，系统往往已经知道：
+  - 这张卡大概是什么；
+  - 上游许可链是否倾向支持；
+  - displayless / branding / feature state 当前是什么。
+- 原始逻辑在这里依然可能“临门一脚收紧”：
+  - 虽然前面已经部分放行，但只要消费链里某个状态码、某个模式位、某个输出结构字段仍不满意，下游控制命令、license state、displayless 派生状态还是会退回或置零。
 
 **patch 后：**
 
-- 即使上游不是标准 datacenter / GRID 受支持 SKU，下游也更可能继续推进到可用态。
+- `sunlock` 的业务意义，是把这些 **中下游消费点** 再往“继续推进”方向推一把。
+- 它和 `kunlock` 的配合关系可以理解成：
+  - `kunlock` 负责把门打开；
+  - `sunlock` 负责别让已经打开的门又被后面的状态消费链关上。
+- 更具体地说，它影响的是三类“最终对外可见”的结果：
+  1. **license state machine 结果**
+     - 包括当前 state、是否进入 unrestricted / restricted 路径、host 是否被同步到新的 license state；
+  2. **displayless / mode code 结果**
+     - 某些内部 `0/1/2/3/4` 模式码最终会被上层控制命令解释成不同的 capability / class 可用态；
+  3. **挂接到 vGPU / GRID 管理结构的状态位**
+     - 这些位一旦归零，前面虽然放行了，后面仍可能表现成“guest 看不见 / host 不发布 / state machine 不启动”。
+- 对最终业务行为的影响是：
+  - guest / host 看到的 license state、displayless mode、某些 capability mode code 更容易落到“可继续 / 已启用 / 非零”的状态；
+  - `gridlicmgrSetLicenseStateOnHost_Wrapper()` 一类宿主同步路径更不容易把结果重新压回保守态；
+  - 某些依赖这些状态码的控制命令和后续对象挂接路径，不会再因为官方 SKU / branding / displayless 组合不标准而回退。
+- 从外部可见效果来看，`sunlock` 更接近“把已经放行的结果真正做实”：
+  - host 侧不只是理论上支持，而是真的持有一个更乐观的 license/displayless 状态；
+  - guest 侧不只是 profile 存在，而是 profile 对应的 mode/state 也更不容易在后续查询里退回到保守值。
+- 结合当前源码与反编译形状，更具体地说：
+  - `_nv019510rm` 更像“把一组上游 capability 组合折叠成 mode/state code”的步骤；
+  - `_nv030355rm` 更像“把 enable/license 结果写回某个输出结构并触发一次后续通知/刷新”；
+  - `_nv030331rm` 更像“把这组结果继续挂接到更上层资源或管理结构”的步骤。
+- 再往源码侧对照，`gridlicmgrSetLicenseStateCapabilitiesToHost()` / `gridlicmgrSetLicenseStateOnHost_Wrapper()` 会把 `licenseState`、`fpsValue`、`licenseExpiryTimestamp`、`licenseExpiryStatus` 这类字段同步回 host；`gpuGetGridEnabledFeature()`、`gpuGetIsGridLicensed()`、`gpuGetIsGridUnlicensedTesla()` 则会把这些状态继续暴露给后续查询者。
+- 这些 getter 和同步状态并不是“摆在那里不用”的：
+  - `subdevice_ctrl_gpu_kernel.c` 会据此决定 `TESLA_ENABLE` 一类对外暴露状态；
+  - `kernel_graphics.c` 会据此裁剪或保留 Quadro / VGX / GeForce 相关 graphics caps；
+  - `gpu_branding.c` 会据此修正最终对外暴露的品牌位。
+- 这意味着 `sunlock` 最终影响的不只是内部布尔量，而是 guest/host 在控制查询里真正能看到的结果：
+  - 某些查询会把卡看成 Tesla / Compute 倾向，还是 Quadro / Gaming 倾向；
+  - graphics caps 里哪些品牌/能力位最终对外可见；
+  - host 侧同步出去的 license / degradation 信息是否还保持保守值。
+- 所以 `sunlock` 作用的不是单个业务点，而是**状态码生成 → 输出结构写回 → host 同步 → 上层查询消费** 这一整段尾部承接链。
 
 ---
 
@@ -1385,6 +1594,7 @@ result = nv026921rm(a1, a2, a3, v9 + 15);
 当前最窄源码函数簇：
 
 - `drivers/resman/src/physical/gpu/gsp/gsp.c:405-449`
+- `drivers/resman/arch/nvalloc/unix/src/osapi.c:4766-4876` `rm_set_rm_firmware_requested`
 - 以及与 displayless / GSP capability 相关的小型 helper 链
 
 关键源码片段：
@@ -1420,11 +1630,40 @@ if (UPROC_ENG_ARCH_FALCON(pFlcn) &&
 
 **patch 前：**
 
-- 某条 GSP / displayless / vGPU capability helper 会在不满足条件时返回否定结果。
+- `gspvgpu` 所在链条更像 **GSP 固件请求 / GSP capability 裁决** 的前置 helper，而不是最后的固件装载函数本身。
+- 它的上游输入通常来自两类信息：
+  - 当前是否处在 vGPU / virtualization 场景；
+  - 当前 display / GSP / firmware 相关 capability bit 是否满足。
+- 在现代 RM 里，GSP 是否请求、是否允许、是否因为 displayless / inst_in_sys / virtualization 环境而被跳过，会直接影响后面整条初始化路径：
+  - 是否走 firmware client RM；
+  - 是否允许某些 display / HDCP / capability 路径继续；
+  - 在 vGPU / displayless 组合场景下，是进入“继续初始化”，还是更早被判成“不允许”。
+- 原始逻辑一旦在这里给出否定结果，后面的 GSP 相关初始化就会更保守，甚至根本不走。
 
 **patch 后：**
 
-- 否定分支被削弱，后续更容易走向继续初始化或继续启用的路径。
+- `gspvgpu` 的业务意义，是削弱这一前置 helper 的否定分支，让系统在 vGPU / displayless 组合下更容易继续走 GSP 相关初始化链。
+- 这并不等于“强制加载 GSP”，而是先把最前面的 capability 裁决往“允许继续”方向拨动；后面的固件请求、skip-load、displayless 特判仍然会继续生效。
+- 因此它的价值更偏向：
+  - **减少 GSP 前置裁决过早否决 unlock 场景的概率**；
+  - 而不是直接替代 `gsp.c` 里的真正固件装载与 skip-load 逻辑。
+- 从最终结果看，它影响的是：
+  - host 侧初始化是否有机会真正进入后续 GSP 相关分支；
+  - 某些 guest 所依赖的 display / capability 路径，是否在最前面的 capability helper 阶段就被提前砍掉。
+- 结合 caller `rm_set_rm_firmware_requested()` 的源码，这条链最终会直接影响两个宿主侧决策：
+  1. `nv->request_firmware` 会不会被置成真，也就是后面是否尝试进入 firmware client RM / GSP 路径；
+  2. `nv->allow_fallback_to_monolithic_rm` 的策略是否还有机会生效，也就是失败后还能不能回退到 monolithic RM。
+- 再具体一点说，这意味着它会影响宿主启动时的路线选择：
+  - 是完全停留在 monolithic RM；
+  - 还是至少尝试走一次 firmware client RM / GSP 路线，再由后面的 displayless / skip-load / fallback 逻辑决定能否真正落地。
+- 这条链在 `osinit.c` 里还会继续体现成两个紧接着的分叉：
+  - `nv->request_firmware` 为真时，先决定是否取 `gsp.bin` 并把 `nv->request_fw_client_rm` 置位；
+  - 之后再由 `kgspInitRm()` 真正尝试进入 GSP client RM，失败时根据 `nv->allow_fallback_to_monolithic_rm` 决定是 hard fail 还是退回 monolithic RM。
+- 因而 `gspvgpu` 的最终业务意义，不只是“某个 helper 更容易返回 true”，而是它会改变 **宿主驱动到底尝不尝试走 GSP 这条初始化路线**，以及失败时是“直接终止”还是“有资格回退”。
+- 从 host/guest 的最终可见结果看：
+  - host 侧会更早决定是否把当前 GPU 归入“尝试 firmware client RM / GSP”的路线；
+  - 如果这条路线根本不尝试，guest 后面依赖的一些 capability / display 相关路径连进入机会都没有；
+  - 如果这条路线被放行，后面即使仍可能因为 displayless 特判或 skip-load 回退，至少已经从“前置 helper 直接否决”升级成“真正进入 GSP 路线再决定成败”。
 
 ---
 
@@ -1511,9 +1750,22 @@ if (os_is_grid_supported())
 
 **业务层等效 patch：**
 
-- `general` 组是 GRID 侧的“总开关补丁包”：
-  - 一方面复用 `kunlock` 的支持判定放宽；
-  - 另一方面复用 `merged` 的 displayless / vGPU 支持放宽。
+- `general` 组不是简单把 KVM 主线 copy 过去，而是把 GRID build 真正在意的两条业务链一起放宽：
+  1. **支持判定链**：先借用 `kunlock` 同款的 `isGridLicenseSupported()` 放宽，让当前板卡先别在入口被踢掉；
+  2. **运行态承接链**：再在 `rm_is_vgpu_supported_device()` 与 displayless / licensed capability 消费链上放宽，让这张卡在 GRID/general 包里真正进入“可承接 profile / displayless class / unlicensed state machine”的运行态。
+- 这条链的业务位置其实很靠前：`rm_is_vgpu_supported_device()` 处于宿主驱动判断“当前板卡是否属于可接受的 vGPU / GRID host 设备”的早期路径，如果这里仍然拒绝，后面根本不会有 profile 发布、displayless class 建立或 license state machine 启动的机会。
+- 这里的“承接链”不是抽象概念，而是会真实落到：
+  - `gridlicmgrUnlicensedStateMachineInit()`：vGPU 场景里一旦 feature type 已知，会直接启动 unlicensed state machine；
+  - `gridlicmgrUnlicensedStateMachineStart()`：把状态从 `UNKNOWN / UNINITIALIZED` 推到 `UNLICENSED_UNRESTRICTED`；
+  - `gridlicmgrSetLicenseStateOnHost_Wrapper()`：把这组结果同步回 host；
+  - displayless capability 消费链：继续把 licensed heads / resolution / pixels 这组约束挂到对象上。
+- 这意味着 `general` 的业务目标，比 `kunlock` 更偏向“让 GRID build 真能跑起来”：
+  - 不是只回答“这卡理论上支不支持”；
+  - 而是继续回答“既然前面说支持了，后面能不能把 vGPU register、displayless class、license state machine 和 profile 约束一起接起来”。
+- 对最终业务结果来说，`general` 更接近“把 host 侧可运行状态补全”的补丁包：
+  - 让 host 不只是接受这张卡，还能继续导出 vGPU register 与 profile 元数据；
+  - 让 displayless class 与 licensed heads / resolution / pixels 这组 guest 侧会直接看到的约束真正落地；
+  - 让 unlicensed state machine 在需要的时候真的启动并把状态同步回 host，而不是停在一个“理论支持但运行态没承接起来”的半开状态。
 
 **字节层等效 patch：**
 
@@ -1663,7 +1915,8 @@ if (os_is_grid_supported())
 - `cudahost` 落在 CUDA limit / host-side control 链，最接近 `kern_cuda_limit.c` 与 `perf/cuda_limit.c` 的函数簇
 - `merged` 中 `_nv032676rm` 落在 `gpuIsGridDisplaylessClassSupported_IMPL()` 的下游 displayless 状态消费链
 - `kunlock` 的 `_nv026411rm` 落在 `gpu_mgr.c + grid_features.c` 的 capability 聚合 / 消费链，而不是单个公开函数直译
-- `vgpusig` 落在 `vgpu_mgr.c / kernel_vgpu_mgr.c` 的 host-vGPU 配置链
+- `vgpusig` 落在 `vgpu_mgr.c / kernel_vgpu_mgr.c` 的 host-vGPU profile 导入链，最接近 `vgpuMgrCreateVgpuType / vgpuMgrPgpuAddVgpuType` 这类函数
+- `general` 的 `_nv028908rm` 落在 `grid_license_manager.c` 与 displayless capability 消费链的交界处，更偏向 state machine / capability 承接逻辑，而不是最上游支持判定
 
 ### 低到中等置信
 
