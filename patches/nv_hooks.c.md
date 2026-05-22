@@ -424,11 +424,29 @@ static NV_STATUS CustomChipInfoGetNameAscii(OBJGPU *pGpu, NvU16 devId, NvU16 gpu
   - `vgpuMgrCreateRequestVgpu()` / `kvgpumgrCreateRequestVgpu()`
   - `vgpuMgrCheckVgpuTypeCreatable()` / `kvgpumgrCheckVgpuTypeCreatable()`
   - `vgpuMgrGetCreatableVgpuTypes()` / `kvgpumgrGetCreatableVgpuTypes()`
-  这类路径最终决定了 host 当前会把哪些 `vgpuTypeId` 视为可创建对象；而这些路径前面依赖的 pGPU identity / encoding 一旦被 `vupdevid` 改写，guest 侧最终能看到的 profile 集合就会跟着漂移。
+  - `vgpuconfigapiCtrlCmdVgpuConfigGetCreatableVgpuTypes_IMPL()`
+  这类路径最终决定了 host 当前会把哪些 `vgpuTypeId` 视为可创建对象，以及把哪些 creatable type 列表真正返回给上层配置接口；而这些路径前面依赖的 pGPU identity / encoding 一旦被 `vupdevid` 改写，guest 侧最终能看到的 profile 集合就会跟着漂移。
 - 也就是说，`vupdevid` 的最终业务效果很像：
   - 先改“这张宿主卡在 RM 眼里是谁”；
-  - 再让后续所有“这张卡能不能承接哪些 profile” 的判断一起跟着改。
+  - 再让后续所有“这张卡能不能承接哪些 profile” 的判断一起跟着改；
+  - 最后把这组变化体现在 **mdev / vGPU config 查询接口实际返回的可创建 profile 列表** 上，而不只是停留在内部状态。
+- 对外部使用者来说，这意味着：
+  - host 侧管理面查询“这张卡现在有哪些 creatable vGPU types”时，返回值本身就可能改变；
+  - 这类返回值会沿着 `vgpuconfigapiCtrlCmdVgpuConfigGetCreatableVgpuTypes_IMPL()` 这类控制接口真正暴露给上层管理面，而不是只停在 RM 内部；
+  - `drivers/resman/kernel/inc/vgpuconfigapi.h:64-67` 还明确把 `NVA081_CTRL_CMD_VGPU_CONFIG_GET_CREATABLE_VGPU_TYPES` 定义成 `RMCTRL_EXPORT(... NON_PRIVILEGED)`，说明这不是内部自检数据，而是本来就打算给外部管理面消费的结果；
+  - 在 KVM 场景里，`vgpuMgrCreateRequestVgpu()` / `kvgpumgrCreateRequestVgpu()` 处理的就是 `mdev_create` 路径，因此这类变化最终不只是“列表长得不一样”，而是会直接改变某个 mdev/profile 创建请求能不能被 host 接受；
+  - guest 侧最终能选到的 profile family，也会因为这份伪装后的宿主身份而发生变化。
 
+```c
+gpuconfigapiCtrlCmdVgpuConfigGetCreatableVgpuTypes_IMPL(...)
+{
+    ...
+    rmStatus = kvgpumgrGetCreatableVgpuTypes(pGpu, pVgpuMgr, pgpuIndex,
+                                            &pParams->numVgpuTypes, pParams->vgpuTypes);
+}
+```
+
+这段接口级代码很关键，因为它说明 `vupdevid` 最终不只是影响内部判断，而是会一路传到“当前 host 对外公布哪些 creatable profiles”的控制返回值上。
 ---
 
 ## 4.2 `klogtrace`
@@ -1553,13 +1571,40 @@ NvBool RmInitAdapter(
   - `_nv030331rm` 更像“把这组结果继续挂接到更上层资源或管理结构”的步骤。
 - 再往源码侧对照，`gridlicmgrSetLicenseStateCapabilitiesToHost()` / `gridlicmgrSetLicenseStateOnHost_Wrapper()` 会把 `licenseState`、`fpsValue`、`licenseExpiryTimestamp`、`licenseExpiryStatus` 这类字段同步回 host；`gpuGetGridEnabledFeature()`、`gpuGetIsGridLicensed()`、`gpuGetIsGridUnlicensedTesla()` 则会把这些状态继续暴露给后续查询者。
 - 这些 getter 和同步状态并不是“摆在那里不用”的：
-  - `subdevice_ctrl_gpu_kernel.c` 会据此决定 `TESLA_ENABLE` 一类对外暴露状态；
+  - `subdevice_ctrl_gpu_kernel.c` 会据此决定 `NV2080_CTRL_GPU_INFO_INDEX_TESLA_ENABLE` 一类对外暴露状态；
   - `kernel_graphics.c` 会据此裁剪或保留 Quadro / VGX / GeForce 相关 graphics caps；
-  - `gpu_branding.c` 会据此修正最终对外暴露的品牌位。
-- 这意味着 `sunlock` 最终影响的不只是内部布尔量，而是 guest/host 在控制查询里真正能看到的结果：
+  - `gpu_branding.c` 会据此修正最终对外暴露的品牌位；
+  - `apps/nvml/dmal/rm/rm_nvml.c:268-299` 与 `apps/nvml/dmal/wddm/wddm_nvml.c:278-303` 还会通过 `NV2080_CTRL_GPU_INFO_INDEX_TESLA_ENABLE` 再把这些结果折叠成 NVML 看到的产品品牌。
+  - 这意味着 `sunlock` 最终不只影响 RM 自己的内部世界观，还会影响用户态工具把这张卡展示成 Tesla / NVIDIA / Quadro / Gaming 哪一类产品。
+
+```c
+// subdevice_ctrl_gpu_kernel.c
+if (gpuGetIsGridUnlicensedTesla(pGpu->gpuInstance) ||
+    (gpuGetGridEnabledFeature(pGpu->gpuInstance) == NV_GRID_LICENSE_FEATURE_CODE_COMPUTE))
+{
+    data = 1;
+}
+
+// kernel_graphics.c
+if (gpuGetIsGridUnlicensedTesla(pGpu->gpuInstance))
+{
+    RMCTRL_CLEAR_CAP(... _VGX);
+    RMCTRL_CLEAR_CAP(... _GEFORCE_SMB);
+}
+```
+
+这两段 consumer 说明，`sunlock` 改出来的不是“内部状态更乐观”这么抽象的结果，而是会直接改写：
+
+- 外部查询到的 `TESLA_ENABLE`；
+- 最终图形 capability 表里还保留哪些品牌/产品位。- 这意味着 `sunlock` 最终影响的不只是内部布尔量，而是 guest/host 在控制查询里真正能看到的结果：
   - 某些查询会把卡看成 Tesla / Compute 倾向，还是 Quadro / Gaming 倾向；
   - graphics caps 里哪些品牌/能力位最终对外可见；
   - host 侧同步出去的 license / degradation 信息是否还保持保守值。
+- 这些结果并不只存在于 RM 私有接口里。当前源码已经能看到几类直接 consumer：
+  - `NV2080_CTRL_GPU_INFO_INDEX_TESLA_ENABLE` 会经 `subdevice_ctrl_gpu_kernel.c` 暴露出去；
+  - NVML 的 `rm_nvml.c` / `wddm_nvml.c` 会再根据这个结果把产品品牌折叠成 Tesla 或非 Tesla；
+  - `kernel_graphics.c` 会裁剪 Quadro / VGX / GeForce 相关图形 capability；
+  - `gpu_branding.c` 会据此修正最终对外暴露的品牌位。
 - 所以 `sunlock` 作用的不是单个业务点，而是**状态码生成 → 输出结构写回 → host 同步 → 上层查询消费** 这一整段尾部承接链。
 
 ---
@@ -1663,8 +1708,26 @@ if (UPROC_ENG_ARCH_FALCON(pFlcn) &&
 - 从 host/guest 的最终可见结果看：
   - host 侧会更早决定是否把当前 GPU 归入“尝试 firmware client RM / GSP”的路线；
   - 如果这条路线根本不尝试，guest 后面依赖的一些 capability / display 相关路径连进入机会都没有；
-  - 如果这条路线被放行，后面即使仍可能因为 displayless 特判或 skip-load 回退，至少已经从“前置 helper 直接否决”升级成“真正进入 GSP 路线再决定成败”。
+  - 如果这条路线被放行，后面即使仍可能因为 displayless 特判或 skip-load 回退，至少已经从“前置 helper 直接否决”升级成“真正进入 GSP 路线再决定成败”；
+  - 宿主机上连 `/proc` 暴露面的 `GPU Firmware` 字段也会受这条路线影响：`rm_get_firmware_version()` 只有在 `request_firmware` 路径成立时才会返回固件版本或 `N/A`，否则该字段直接为空，不会被 `nv-procfs` 打印出来；
+  - 换句话说，`gspvgpu` 不只是影响内部初始化岔路，连宿主机最终给用户看的“这张卡有没有走到 firmware/GSP 路线”都能留下直接痕迹。
 
+```c
+// osapi.c
+nv->request_firmware =
+    (bFirmwareCapable &&
+     ((rmFirmwareMode == NV_FIRMWARE_MODE_ENABLED) ||
+      (bEnableByDefault && (rmFirmwareMode != NV_FIRMWARE_MODE_DISABLED))));
+
+// nv-procfs.c
+rm_get_firmware_version(sp, nv, firmware_version, sizeof(firmware_version));
+if (firmware_version[0] != '\0')
+{
+    seq_printf(s, "GPU Firmware:\t %s\n", firmware_version);
+}
+```
+
+这说明 `gspvgpu` 的影响不只体现在“内部是否去调 `kgspInitRm()`”，还会直接体现在宿主机对外可见的 firmware 路线与 firmware 信息暴露上。
 ---
 
 ## 6. `NV_GRID_BUILD`：`general` 组
