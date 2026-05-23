@@ -436,6 +436,32 @@ static NV_STATUS CustomChipInfoGetNameAscii(OBJGPU *pGpu, NvU16 devId, NvU16 gpu
   - `drivers/resman/kernel/inc/vgpuconfigapi.h:64-67` 还明确把 `NVA081_CTRL_CMD_VGPU_CONFIG_GET_CREATABLE_VGPU_TYPES` 定义成 `RMCTRL_EXPORT(... NON_PRIVILEGED)`，说明这不是内部自检数据，而是本来就打算给外部管理面消费的结果；
   - 在 KVM 场景里，`vgpuMgrCreateRequestVgpu()` / `kvgpumgrCreateRequestVgpu()` 处理的就是 `mdev_create` 路径，因此这类变化最终不只是“列表长得不一样”，而是会直接改变某个 mdev/profile 创建请求能不能被 host 接受；
   - guest 侧最终能选到的 profile family，也会因为这份伪装后的宿主身份而发生变化。
+- 而且这种变化不只体现在“有哪些 `vgpuTypeId` 可见”，还会体现在“这些 type 对外声称自己具备什么属性”上。当前源码里：
+  - `vgpuMgrCreateVgpuType()` / `kvgpumgrCreateVgpuType()` 会把 `maxPixels`、`frlConfig`、`cudaEnabled`、`vgpuName`、`vgpuClass`、`licensedProductName` 等字段挂进 `VGPU_TYPE`；
+  - `vgpuconfigapiCtrlCmdVgpuConfigGetVgpuTypeInfo_IMPL()` 与 `hostvgpudeviceapiCtrlCmdGetVgpuTypeInfo_IMPL()` 又会把这些字段原样拷回公开控制返回值；
+  - `apps/nvml/dmal/rm/rm_vgpu.c:368-399` 还会把同一份 `GET_VGPU_TYPE_INFO` 返回值继续拷进 NVML 的 `vgpuTypeStaticInfo` 缓存；
+  - `apps/nvml/api.c:8976-9017, 9041, 9073-9074, 9167-9168, 9224-9227` 则会继续把这些缓存字段直接暴露成 NVML 的 `vgpuTypeClass`、`vgpuTypeName`、`gpuInstanceProfileId`、`deviceID/subsystemID`、最大分辨率和 frame-rate limit 查询结果；
+  - `sdk/nvidia/inc/ctrl/ctrla081.h:83-118` 与 `sdk/nvidia/inc/ctrl/ctrla082.h:72-105` 也直接把这些字段定义进 `GET_VGPU_TYPE_INFO` 结构里。
+- 这意味着 `vupdevid` 一旦让 RM 走到了另一组 `vgpuTypeInfo`，外部看到的不只是 creatable 列表变化，还包括：
+  - `maxPixels` / `maxResolutionX/Y` 这种显示容量边界；
+  - `frlConfig` / `frlEnable` 这种帧率限制相关配置；
+  - `cudaEnabled` / `gpuDirectSupported` / `nvlinkP2PSupported` 这类功能位；
+  - `vgpuName`、`vgpuClass`、`licensedProductName` 这类管理面和 UI 直接展示的 profile 身份信息；
+  - `pdevId / vdevId / gpuInstanceProfileId` 这类会继续暴露给工具层的设备与实例标识；
+  - 以及 NVML 最终返回给用户态工具的 `vgpu type name/class/frame rate limit/max resolution` 这些直接展示值。
+- 这条外显链还不只停在 NVML。当前源码里 `drivers/gpgpu/cuda/src/cui/dmal/rm/rm_control_al.c:2364-2371` 会通过 `NVA080_CTRL_CMD_VGPU_GET_CONFIG` 读取 `cudaEnabled`，再把它折叠成 `vgpuCaps->isCudaCapable`；而 `cuictx.c:4134-4136` 又会在这个位为假时直接报 `CUDA is not supported on this vGPU profile`。这意味着一旦 `vupdevid` 把宿主身份切到另一组 profile 家族，后续 guest 侧看到的也不只是“名字和 FRL 变了”，连 CUDA capability 判断和最终报错行为都可能跟着切换。
+- 换句话说，`vupdevid` 最终影响的不是单一控制面，而是 **可创建列表 → type 元数据 → NVML 静态属性 → CUDA capability/报错行为** 这一整条 profile 属性传播链。
+- 再往下压一层源码，`kvgpumgrGetCreatableVgpuTypes()` 不是简单把一个缓存数组原样抄出去，而是会遍历 `pgpuInfo->vgpuTypes[]`，逐项调用 `kvgpumgrCheckVgpuTypeCreatable()` 过滤，只有检查通过的项才会写进 `vgpuTypes[*numVgpuTypes]` 并增加计数。
+- 这意味着 `vupdevid` 改掉的“宿主是谁”并不会只影响 profile 导入阶段一次，而是会继续参与 **导入 → creatable 判定 → 控制接口返回** 这三层链：
+  1. 先在 `vgpuMgrGetPgpuDevIdEncoding()` / `vgpuMgrGetPgpuSubdevIdEncoding()` 里生成伪装后的 identity / alias encoding；
+  2. 再让 `vgpuMgrCheckVgpuTypeCreatable()` / `kvgpumgrCheckVgpuTypeCreatable()` 以这套身份去筛选哪些 type 还算“当前宿主可创建”；
+  3. 最后由 `vgpuconfigapiCtrlCmdVgpuConfigGetCreatableVgpuTypes_IMPL()` 把筛过的 `numVgpuTypes` 与 `vgpuTypes[]` 原样回填给控制调用者。
+- 因而从外部视角看，`vupdevid` 带来的不是单纯“内部 alias 变了”，而是 **host 对外公布的 creatable profile 清单本身被重算了一遍**。只要某个 `vgpuTypeId` 在这套伪装身份下能通过 `CheckVgpuTypeCreatable`，它就会真正进入返回数组；反过来，原本可见的 type 也可能因为这套新身份被过滤掉。
+- 而且这条属性传播链不会停在 RM 私有控制面：
+  - `hostvgpudeviceapiCtrlCmdGetVgpuTypeInfo_IMPL()` / `vgpuconfigapiCtrlCmdVgpuConfigGetVgpuTypeInfo_IMPL()` 会把 `vgpuName`、`vgpuClass`、`maxResolutionX/Y`、`maxPixels`、`frlConfig`、`cudaEnabled`、`licensedProductName` 等字段原样返回；
+  - NVML 的 `apps/nvml/dmal/rm/rm_vgpu.c:368-399` 会把这些字段缓存进 `vgpuTypeStaticInfo`，而 `apps/nvml/api.c:8976-9017, 9167-9168, 9224-9227` 又会把它们继续暴露成用户态直接能看到的 `vgpuTypeName`、`vgpuTypeClass`、最大分辨率和 frame-rate limit；
+  - CUDA 的 `drivers/gpgpu/cuda/src/cui/dmal/rm/rm_control_al.c:2364-2371` 还会通过 `NVA080_CTRL_CMD_VGPU_GET_CONFIG` 读取 `cudaEnabled`，再把它折叠成 `vgpuCaps->isCudaCapable`。
+- 这意味着 `vupdevid` 真正改掉的，不只是“能不能创建某个 type”，而是 **创建后这个 profile 对外自报的名字、类别、分辨率/像素上限、FRL 配置以及 CUDA capability**。对 guest 和管理工具来说，这已经不是“内部身份漂移”，而是整套 profile 元数据包一起换了。
 
 ```c
 gpuconfigapiCtrlCmdVgpuConfigGetCreatableVgpuTypes_IMPL(...)
@@ -1468,6 +1494,7 @@ NvBool RmInitAdapter(
 
 - 定义：`patches/nv_hooks.c:276-286`
 - 项数：5
+- 仓库自带说明：`doc/options.rst:74-76` 直接把 `vup_sunlock` 描述成“based on patch from LIL'pingu fixing xid 43 crashes when running vgpu with consumer cards”，并注明“not needed when vup_kunlock is used”。这条说明很重要，因为它提示这组 patch 的初始动机并不只是“让结果更像 licensed”，还包括**避免 consumer 卡跑 vGPU 时在后续状态消费链里崩掉或掉回错误态**；同时也说明在维护者心里，`sunlock` 更像是一组补救型/兜底型状态消费修正，而不是最核心的解锁主线。
 
 ### B. 全部命中二进制函数
 
@@ -1479,6 +1506,8 @@ NvBool RmInitAdapter(
 - `0x000BECB1 -> 0x0BEC71`：`_nv030355rm`
 - `0x000BE72C -> 0x0BE6EC`：`_nv030331rm`
 
+其中需要特别注意的是：两处命中 `_nv032674rm` 的 patch 点都落在函数很前面的 early-gate 区域，发生在后面那段大规模 `deviceId/subdeviceId` 白名单分支之前。也就是说，这两处更像是在改“白名单判断之前是否提前 short-circuit”的前置 gate，而不是直接去改整张官方支持表本身。
+
 其中 `_nv019510rm` 的反编译显示，它会综合：
 
 - `v2[2988]`
@@ -1489,17 +1518,60 @@ NvBool RmInitAdapter(
 
 再返回 `0/1/2/3/4` 这类状态码。
 
+这组返回码现在已经可以和公开控制头里的常量直接对上：
+
+- `0 = NV2080_CTRL_GPU_GRID_LICENSE_STATE_UNKNOWN`
+- `1 = NV2080_CTRL_GPU_GRID_LICENSE_STATE_UNINITIALIZED`
+- `2 = NV2080_CTRL_GPU_GRID_LICENSE_STATE_UNLICENSED_UNRESTRICTED`，也就是 **no capping**
+- `3 = NV2080_CTRL_GPU_GRID_LICENSE_STATE_UNLICENSED_RESTRICTED_1`，也就是 **partial capping**
+- `4 = NV2080_CTRL_GPU_GRID_LICENSE_STATE_UNLICENSED`，也就是 **full capping**
+- `5 = NV2080_CTRL_GPU_GRID_LICENSE_STATE_LICENSED`，也就是 **licensed / no capping**
+
+其中最关键的一点是：`LICENSED = 5` 并不是 `_nv019510rm` 直接产出的分支。源码里的 `subdeviceCtrlCmdGpuEnableGridLicense_IMPL()` 会在真正拿到 license 后，单独把状态推进到 `NV2080_CTRL_GPU_GRID_LICENSE_STATE_LICENSED`。这说明 `_nv019510rm` 更像“**未授权 state machine 当前应该落在哪个阶段**”的分级器，而不是整个 licensing 流程的最终裁决点。
+
+而且这组状态不是静态标签。当前源码里能直接看到一条明确的时序链：
+
+- `gridlicmgrUnlicensedStateMachineStart()` / `gridlicmgrUnlicensedStateMachineRestart()` 会把 vGPU 从 `UNKNOWN` 或 `UNINITIALIZED` 推到 `UNLICENSED_UNRESTRICTED`；
+- 之后 1Hz 定时回调 `_gridlicmgrUnlicensedStateMachineTransitionCallback()` 会按超时把状态从 `UNLICENSED_UNRESTRICTED` 推到 `UNLICENSED_RESTRICTED_1`，再继续推到 `UNLICENSED`；
+- 这些超时值还不是写死的，`gridlicmgrUnlicensedStateTimeoutValues` 会先取默认值，再允许 registry 覆盖。
+
+所以 `_nv019510rm` 的业务意义，已经可以更具体地理解成：它不是单纯在吐一个“当前状态码”，而是在决定 **当前 guest/host 应该落在未授权状态机的哪一级降级台阶上**。
+
 ### C. 源码映射
 
-当前最窄源码函数簇：
+当前最窄源码函数簇，已经可以比之前更具体地分成四层：
 
-- `drivers/resman/src/kernel/virtualization/grid/grid_features.c:isGridLicenseSupported`
-- `drivers/resman/src/kernel/virtualization/grid/grid_features.c:disableAllGridLicensedFeatures`
-- `drivers/resman/src/kernel/virtualization/grid/grid_features.c:gpuEnableGridFeature`
-- `drivers/resman/src/physical/gpu/gpu_branding.c:gpuDetectVgxBranding_IMPL`
-- `drivers/resman/src/physical/gpu/gpu_branding.c:deviceCtrlCmdGpuGetBrandCaps_IMPL`
+- **上游 gating / feature 背景**
+  - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:isGridLicenseSupported`
+  - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:disableAllGridLicensedFeatures`
+  - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:gpuEnableGridFeature`
+- **状态机与公开状态常量**
+  - `drivers/resman/src/kernel/virtualization/grid/grid_license_manager.c:gridlicmgrGetCurrentState`
+  - `drivers/resman/src/kernel/virtualization/grid/grid_license_manager.c:gridlicmgrGetFPSValue`
+  - `drivers/resman/src/kernel/virtualization/grid/grid_license_manager.c:gridlicmgrGetCUDASleepIntervalValue`
+  - `drivers/resman/src/kernel/virtualization/grid/grid_license_manager.c:gridlicmgrTransitionToState`
+  - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:subdeviceCtrlCmdGpuGetGridUnlicensedStateMachineInfo_IMPL`
+  - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:subdeviceCtrlCmdGpuEnableGridLicense_IMPL`
+  - `sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080gpu.h:5160-5175`
+- **host / guest license info 写回层**
+  - `drivers/resman/src/kernel/virtualization/grid/grid_license_manager.c:gridlicmgrSetLicenseStateCapabilitiesToHost`
+  - `drivers/resman/kernel/vgpu/nv/vgpuctrl.c:vgpuSetLicenseInfo`
+  - `drivers/resman/kernel/vgpu/nv/hostvgpudeviceapi.c:hostvgpudeviceapiCtrlCmdSetVmLicenseInfo_IMPL`
+  - `sdk/nvidia/inc/ctrl/ctrla080.h:709-715`
+  - `sdk/nvidia/inc/ctrl/ctrla082.h:194-200`
+- **下游品牌 / capability consumer**
+  - `drivers/resman/src/physical/gpu/gpu_branding.c:gpuDetectVgxBranding_IMPL`
+  - `drivers/resman/src/physical/gpu/gpu_branding.c:deviceCtrlCmdGpuGetBrandCaps_IMPL`
 
-当前置信度：**中等偏低**。
+当前置信度可以拆开看：
+
+- 对 `_nv019510rm` 的 `0/1/2/3/4` 返回码与公开 `GRID_LICENSE_STATE_*` 常量的一一对应：**高置信**；
+- 对 `_nv030355rm -> hostvgpudeviceapiCtrlCmdSetVmLicenseInfo_IMPL()` 的对应：**高置信**，因为它同时满足三层对位：
+  1. 先经 `nv032674rm(v2)` 做与 `isGridLicenseSupported(pGpu)` 对应的 gating；
+  2. 再按 `licensed / licenseState / fpsValue / licenseExpiryTimestamp / licenseExpiryStatus` 的布局拷贝字段；
+  3. 最后调用 `nv000119rm(v2, 4)`，而源码里的 `NVA081_NOTIFIERS_EVENT_VGPU_GUEST_LICENSE_STATE_CHANGED` 恰好就是 `4`；
+- 对 `_nv030331rm` 的单函数源码落点：**中等置信**，当前更像 guest/vGPU 管理结构挂接与后续状态传播的一段承接逻辑；
+- 对它们整体落在“unlicensed state machine + host 同步 + 对外 consumer”这条业务链上：**高置信**。
 
 更稳妥的结论是：
 
@@ -1511,12 +1583,20 @@ NvBool RmInitAdapter(
   - `gpuGetIsGridUnlicensedTesla()`
 - 换句话说，它更接近“license state / unlicensed state machine / host 可见状态”的消费与回写层，而不是最上游的支持白名单层。
 - 更具体地说，源码里 `gridlicmgrSetLicenseStateCapabilitiesToHost()` 会把 `licenseState`、`fpsValue`、`licenseExpiryTimestamp`、`licenseExpiryStatus` 以及 `bvGPUDegradationDisable` 一并打包，再通过 `vgpuSetLicenseInfo()` 同步给 host；这正说明 `sunlock` 所影响的不是抽象布尔量，而是最终会被 host/guest 共同观察到的一组 license / degradation 状态。
+- 再往 `_nv030355rm` 的反编译形状看，它现在已经不只是“像某个输出结构写回”，而是高度贴近 `drivers/resman/kernel/vgpu/nv/hostvgpudeviceapi.c:535-580` 这条 host vGPU device license info 写回路径：
+  - `licensed -> guestVmInfo.licensed`
+  - `licenseState -> guestVmInfo.licenseState`
+  - `licenseExpiryTimestamp -> guestVmInfo.licenseExpiryTimestamp`
+  - `licenseExpiryStatus -> guestVmInfo.licenseExpiryStatus`
+  - `if (licenseState != UNKNOWN) guestVmInfo.frameRateLimit = fpsValue`
+  - 最后再触发 `NVA081_NOTIFIERS_EVENT_VGPU_GUEST_LICENSE_STATE_CHANGED`
+- 这说明 `_nv030355rm` 更像 **host 侧把 per-VM license / frame-rate 结果真正落库并广播事件** 的 consumer，而不只是泛泛的“某个输出结构”。
 
 ### D. 双层等效 patch
 
 **业务层等效 patch：**
 
-- 放宽 displayless / GRID capability / branding 消费链上的若干状态门槛，让上层更容易进入“支持 / 已启用 / 可继续”分支。
+- 不单纯是“所有地方都更宽松”，而是把若干原本会落到 `UNKNOWN / unsupported / 早退失败` 的状态消费路径，重新导向 **仍可传播、仍会被 host/guest 继续消费的降级态**，从而避免 consumer 卡在后续 licensing / displayless / guest 挂接链里直接崩掉或只剩空结果。
 
 **字节层等效 patch：**
 
@@ -1535,7 +1615,7 @@ NvBool RmInitAdapter(
 **patch 前：**
 
 - `sunlock` 这组 patch 所在的位置，已经不是最上游的“这卡支不支持”判断，而是 **更靠后的状态消费链**：
-  - 有的地方在把 displayless / capability 组合映射成 `0/1/2/3/4` 这类模式码；
+  - 有的地方在把 displayless / capability 组合折叠成 `0/1/2/3/4` 这类状态码；
   - 有的地方在把 enable/license 结果写回某个输出结构；
   - 有的地方在把这些结果继续挂接到 vGPU / GRID 管理结构里。
 - 换句话说，到了 `sunlock` 这一步，系统往往已经知道：
@@ -1547,35 +1627,59 @@ NvBool RmInitAdapter(
 
 **patch 后：**
 
-- `sunlock` 的业务意义，是把这些 **中下游消费点** 再往“继续推进”方向推一把。
-- 它和 `kunlock` 的配合关系可以理解成：
-  - `kunlock` 负责把门打开；
-  - `sunlock` 负责别让已经打开的门又被后面的状态消费链关上。
+- `sunlock` 的业务意义，不宜简单理解成“所有地方都更乐观”。更贴近当前证据的说法是：它会把若干 **中下游消费点** 重新布线，让结果尽量落到“仍可继续传播的降级态”，而不是直接掉回 `UNKNOWN / unsupported / 早退失败`。
+- 这也是它和 `kunlock` 最不同的地方：
+  - `kunlock` 更像是在前面把门打开；
+  - `sunlock` 则更像是在后面决定：如果这扇门不能以“官方完全支持”的姿势通过，那至少要把结果导向一个 **受限但仍可消费** 的状态机档位，而不是直接崩掉或只剩空结果。
+- 这和 `doc/options.rst:74-76` 把 `vup_sunlock` 直接描述成“fixing xid 43 crashes when running vgpu with consumer cards”是吻合的：它的目标不只是“看起来更像支持”，还包括**把 consumer 卡从危险的失败态导回可承受的降级态**。
 - 更具体地说，它影响的是三类“最终对外可见”的结果：
-  1. **license state machine 结果**
-     - 包括当前 state、是否进入 unrestricted / restricted 路径、host 是否被同步到新的 license state；
-  2. **displayless / mode code 结果**
-     - 某些内部 `0/1/2/3/4` 模式码最终会被上层控制命令解释成不同的 capability / class 可用态；
-  3. **挂接到 vGPU / GRID 管理结构的状态位**
-     - 这些位一旦归零，前面虽然放行了，后面仍可能表现成“guest 看不见 / host 不发布 / state machine 不启动”。
+  1. **unlicensed state machine 档位本身**
+     - 这里已经不是抽象的 mode code，而是公开定义好的 license state：
+       - `0 = UNKNOWN`
+       - `1 = UNINITIALIZED`
+       - `2 = UNLICENSED_UNRESTRICTED`
+       - `3 = UNLICENSED_RESTRICTED_1`
+       - `4 = UNLICENSED`
+     - 这意味着 `_nv019510rm` 实际上是在决定 guest / host 当前会被视为“未知、未初始化、未授权但不限速、部分限速、完全限速”中的哪一档；
+  2. **由 state 派生出来的性能/降级参数**
+     - `gridlicmgrGetFPSValue()` 会把这些状态进一步翻译成具体 FRL：
+       - `2` 走 licensed FPS 值，也就是“未授权但仍不降帧”；
+       - `3` 会把 FPS 压到 `min(licensedFPS, 15)`；
+       - `4` 会压到 `3 FPS`；
+       - `0/1` 则返回 unbounded；
+     - `gridlicmgrGetCUDASleepIntervalValue()` 还会把 `3/4` 这两档进一步翻译成 `20 ms` CUDA enforced delay，而其他状态为 `0`；
+  3. **被同步/暴露出去的结构化状态**
+     - `gridlicmgrSetLicenseStateCapabilitiesToHost()` 会把 `bvGPUDegradationDisable + licenseState + fpsValue + licenseExpiryTimestamp + licenseExpiryStatus` 一起同步给 host；
+     - `_nv030355rm` 的字段拷贝形状又说明，这些值后面会继续被写进 host vGPU device 侧的 per-VM license info 对象；
+     - `hostvgpudeviceapiCtrlCmdSetVmLicenseInfo_IMPL()` 还会把 `fpsValue` 落成 `guestVmInfo.frameRateLimit`，并触发 `NVA081_NOTIFIERS_EVENT_VGPU_GUEST_LICENSE_STATE_CHANGED`；
+     - `vgpu_mgr.c:2549-2572` 与 `kernel_vgpu_mgr.c:2404-2427` 还会在 guest 迁移/复制路径里继续保留 `guestVmInfo.licenseState` 与 `guestVmInfo.frameRateLimit`，并在“unknown + unlicensed”场景下把 frame-rate 结果钳成 `3 FPS`；
+     - `vgpuapiCtrlCmdVGpuGetConfig_IMPL()` 还显示出同一 licensing 域存在另一条 guest-facing framerate consumer：当 `isGridLicenseSupported(pGpu)` 为真但 `PDB_PROP_GPU_IS_GRID_VGPU_ENABLED` / `PDB_PROP_GPU_IS_GRID_LICENSED` 不满足时，它会直接把 `frameRateLimiter` 改成 `0xE0400003`；这说明 guest 最终读到的限速并不只存在于内部 state，而是会在配置返回值里落成具体 FRL 掩码；
+     - `NV2080_CTRL_GPU_GRID_UNLICENSED_STATE_MACHINE_INFO_PARAMS` 本身就把 `currentState / fpsValue / cudaSleepInterval / licenseExpiryTimestamp / licenseExpiryStatus` 定义成公开控制返回值，这说明这组状态不是 RM 私货，而是原本就打算直接给 guest/userland 消费；
+     - 这些位一旦归零或落到更保守的 state，前面虽然放行了，后面仍可能表现成“guest 看不见 / host 不发布 / state machine 继续降级”。
 - 对最终业务行为的影响是：
-  - guest / host 看到的 license state、displayless mode、某些 capability mode code 更容易落到“可继续 / 已启用 / 非零”的状态；
+  - guest / host 看到的已经不是模糊的“许可更乐观”，而是 **当前到底处于 unrestricted、15 FPS partial capping，还是 3 FPS full capping**；
   - `gridlicmgrSetLicenseStateOnHost_Wrapper()` 一类宿主同步路径更不容易把结果重新压回保守态；
   - 某些依赖这些状态码的控制命令和后续对象挂接路径，不会再因为官方 SKU / branding / displayless 组合不标准而回退。
 - 从外部可见效果来看，`sunlock` 更接近“把已经放行的结果真正做实”：
-  - host 侧不只是理论上支持，而是真的持有一个更乐观的 license/displayless 状态；
-  - guest 侧不只是 profile 存在，而是 profile 对应的 mode/state 也更不容易在后续查询里退回到保守值。
+  - host 侧不只是理论上支持，而是真的持有一组更乐观的 `licenseState / fpsValue / degradation` 字段；
+  - guest 侧不只是 profile 存在，而是 profile 对应的 FRL、CUDA enforced delay、license state 也更不容易在后续查询里退回到保守值。
 - 结合当前源码与反编译形状，更具体地说：
-  - `_nv019510rm` 更像“把一组上游 capability 组合折叠成 mode/state code”的步骤；
-  - `_nv030355rm` 更像“把 enable/license 结果写回某个输出结构并触发一次后续通知/刷新”；
-  - `_nv030331rm` 更像“把这组结果继续挂接到更上层资源或管理结构”的步骤。
+  - `_nv032674rm` 里的两处 `sunlock` patch 需要合在一起看：`0x000D65C8 -> 0x0D6588` 把一条 `jnz +0x2E` 改成了 `jmp +0x2E`，而 `0x000D65FA -> 0x0D65BA` 又把落点处 `mov r13d, 1` 的立即数改成了 `0`；两者组合后，等效于把这条早退路径从“直接 `return 1`”改成了“直接 `return 0`”。更关键的是，这两处都发生在 `_nv032674rm` 进入大段 `deviceId/subdeviceId` whitelist 之前，因此它们更像是在改 **前置 short-circuit gate**。单独看它会显得更保守，但和下面 `_nv019510rm` 的 `0 -> 3` 配合起来看，它更像是在把某类原本会落到 `unsupported/unknown` 的路径，重新导向“受限但仍可继续”的 unlicensed state machine 分支；
+  - `_nv019510rm` 不只是“把一组上游 capability 组合折叠成 state code”，而且在字节级上已经能看到：`0x004F6D2A -> 0x4F6CEA` 命中的正是一条 `mov dword ptr [rbx], 0` 的立即数字段，patch 后等效于把这里改成 `mov dword ptr [rbx], 3`；也就是说，在原本会回落到 `UNKNOWN(0)` 的分支上，补丁直接把结果推成了 `UNLICENSED_RESTRICTED_1(3)`；
+  - `_nv030355rm` 不只是“写回某个输出结构并触发一次后续通知/刷新”，而且 `0x000BECB1 -> 0x0BEC71` 命中的正是 `jz +0x42` 的位移字节；把它改成 `0x00` 之后，等效于让这条“license unsupported 就返回 `86`”的早退跳转失效，后续 `guestVmInfo` 写回与 `LICENSE_STATE_CHANGED` 事件得以继续发生；
+  - `_nv030331rm` 不只是“把这组结果继续挂接到更上层资源或管理结构”，而且 `0x000BE72C -> 0x0BE6EC` 命中的正是 `or dword ptr [...], 0x10` 的立即数字段；把 `0x10` 改成 `0x00` 后，等效于阻止这条后续 guest/resource 挂接路径再额外打上一个保守 flag。
+- 这也解释了为什么 `sunlock` 的整体效果不像“把一切都伪造成 licensed”。更贴近当前证据的说法是：它把若干原本会掉进 `UNKNOWN / unsupported / 直接早退` 的路径，重新分流到 **`UNLICENSED_RESTRICTED_1` / `UNLICENSED` 这种仍可继续传播、仍会被上层消费的降级档位**，从而让 host/guest 后面的 consumer 有状态可读，而不是直接只剩一个失败或空结果。
 - 再往源码侧对照，`gridlicmgrSetLicenseStateCapabilitiesToHost()` / `gridlicmgrSetLicenseStateOnHost_Wrapper()` 会把 `licenseState`、`fpsValue`、`licenseExpiryTimestamp`、`licenseExpiryStatus` 这类字段同步回 host；`gpuGetGridEnabledFeature()`、`gpuGetIsGridLicensed()`、`gpuGetIsGridUnlicensedTesla()` 则会把这些状态继续暴露给后续查询者。
-- 这些 getter 和同步状态并不是“摆在那里不用”的：
+- 这些 getter 和同步状态并不是“摆在那里不用”的。当前源码已经能看到至少七类直接 consumer：
   - `subdevice_ctrl_gpu_kernel.c` 会据此决定 `NV2080_CTRL_GPU_INFO_INDEX_TESLA_ENABLE` 一类对外暴露状态；
   - `kernel_graphics.c` 会据此裁剪或保留 Quadro / VGX / GeForce 相关 graphics caps；
   - `gpu_branding.c` 会据此修正最终对外暴露的品牌位；
-  - `apps/nvml/dmal/rm/rm_nvml.c:268-299` 与 `apps/nvml/dmal/wddm/wddm_nvml.c:278-303` 还会通过 `NV2080_CTRL_GPU_INFO_INDEX_TESLA_ENABLE` 再把这些结果折叠成 NVML 看到的产品品牌。
-  - 这意味着 `sunlock` 最终不只影响 RM 自己的内部世界观，还会影响用户态工具把这张卡展示成 Tesla / NVIDIA / Quadro / Gaming 哪一类产品。
+  - `apps/nvml/dmal/rm/rm_nvml.c:268-299` 与 `apps/nvml/dmal/wddm/wddm_nvml.c:278-303` 会通过 `NV2080_CTRL_GPU_INFO_INDEX_TESLA_ENABLE` 再把这些结果折叠成 NVML 看到的产品品牌；
+  - `apps/nvml/dmal/rm/rm_mappings.c:229-238` 与 `rm_nvml.c:1453-1458` / `wddm_nvml.c:1603-1608` 还会把 RM 的 `GRID_LICENSE_STATE_*` 一一映射成 `NVML_GRID_LICENSE_STATE_*`，所以 `sunlock` 不只影响“品牌像什么”，还会直接影响 NVML 查询到的 license state；
+  - `hostvgpudeviceapiCtrlCmdSetVmLicenseInfo_IMPL()` 触发的 `NVA081_NOTIFIERS_EVENT_VGPU_GUEST_LICENSE_STATE_CHANGED` 又会经 `apps/nvml/dmal/rm/rm_vgpu_event.c:214-215` 映射成 `nvmlVgpuEventTypeGuestLicenseStateChanged`，说明这组变化不仅能被轮询查到，还能被 NVML 的 vGPU 事件流直接观察到；
+  - `drivers/gpgpu/cuda/src/cui/dmal/rm/rm_control_al.c:2329-2336` 与 `cuiinit.c:4109-4116` 会把 `currentState + cudaSleepInterval` 直接翻成 `CUDA_ERROR_DEVICE_NOT_LICENSED` 与实际 `cuosSleep()` 延迟；
+  - `drivers/xfree86/4.0/nvidia/disp/virtual/nv_virtual.c:1094-1112` 会按 `fpsValue` 更新 guest 显示侧 frame-rate limiter，而 `nv_virtual.c:1170-1178` / `1364-1375` 还会在 license-state change 事件后重查显示参数与 maxPixels。
+  - 这意味着 `sunlock` 最终不只影响 RM 自己的内部世界观，还会影响用户态工具、CUDA 调度，以及 guest 显示栈看到的限速和配置刷新。
 
 ```c
 // subdevice_ctrl_gpu_kernel.c
@@ -1596,16 +1700,36 @@ if (gpuGetIsGridUnlicensedTesla(pGpu->gpuInstance))
 这两段 consumer 说明，`sunlock` 改出来的不是“内部状态更乐观”这么抽象的结果，而是会直接改写：
 
 - 外部查询到的 `TESLA_ENABLE`；
-- 最终图形 capability 表里还保留哪些品牌/产品位。- 这意味着 `sunlock` 最终影响的不只是内部布尔量，而是 guest/host 在控制查询里真正能看到的结果：
+- 最终图形 capability 表里还保留哪些品牌/产品位。
+
+而且 `TESLA_ENABLE` 在这里也不是一个孤立标志位。`subdevice_ctrl_gpu_kernel.c` 会先取物理品牌 `gpuIsTeslaBranded(pGpu)`，再用 `gpuGetIsGridUnlicensedTesla()` 与 `gpuGetGridEnabledFeature()` 覆盖它：
+
+- `COMPUTE` 或 `unlicensedTesla` 会把结果强行推到 `1`；
+- `QUADRO` / `GAMING` 会把结果压回 `0`。
+
+这意味着 `_nv019510rm` / `_nv030355rm` / `_nv030331rm` 这组 `sunlock` patch 所守住的，并不只是“许可状态本身”，而是 **许可状态如何被重新解释成对外品牌/产品类别结论**。换句话说，license state machine 产出的中间态，到了这一步会再次被折叠成一个更粗粒度、但对外更常被消费的产品判断位。
+
+- 这意味着 `sunlock` 最终影响的不只是内部布尔量，而是 guest/host 在控制查询里真正能看到的结果：
   - 某些查询会把卡看成 Tesla / Compute 倾向，还是 Quadro / Gaming 倾向；
   - graphics caps 里哪些品牌/能力位最终对外可见；
   - host 侧同步出去的 license / degradation 信息是否还保持保守值。
 - 这些结果并不只存在于 RM 私有接口里。当前源码已经能看到几类直接 consumer：
   - `NV2080_CTRL_GPU_INFO_INDEX_TESLA_ENABLE` 会经 `subdevice_ctrl_gpu_kernel.c` 暴露出去；
-  - NVML 的 `rm_nvml.c` / `wddm_nvml.c` 会再根据这个结果把产品品牌折叠成 Tesla 或非 Tesla；
+  - NVML 的 `rm_nvml.c:276-299` / `wddm_nvml.c:286-305` 会再根据这个结果，把非 vGPU 场景下的产品品牌折叠成 `NVML_BRAND_TESLA` 或 `NVML_BRAND_NVIDIA`；
+  - `rm_mappings.c:229-238` 与 `rm_nvml.c:1453-1458` / `wddm_nvml.c:1603-1608` 还会把 RM 的 `GRID_LICENSE_STATE_*` 一一映射成 `NVML_GRID_LICENSE_STATE_*`，所以 `sunlock` 不只影响“品牌像什么”，还会直接影响 NVML 查询到的 license state；
+  - `hostvgpudeviceapiCtrlCmdSetVmLicenseInfo_IMPL()` 触发的 `NVA081_NOTIFIERS_EVENT_VGPU_GUEST_LICENSE_STATE_CHANGED` 又会经 `apps/nvml/dmal/rm/rm_vgpu_event.c:214-215` 映射成 `nvmlVgpuEventTypeGuestLicenseStateChanged`，说明这组变化不仅能被轮询看到，还能被事件流直接观察到；
+  - `drivers/gpgpu/cuda/src/cui/dmal/rm/rm_control_al.c:2329-2336` 与 `cuiinit.c:4109-4116` 会把 `currentState + cudaSleepInterval` 直接翻成 `CUDA_ERROR_DEVICE_NOT_LICENSED` 与实际 `cuosSleep()` 延迟；
+  - `drivers/xfree86/4.0/nvidia/disp/virtual/nv_virtual.c:1094-1112` 会按 `fpsValue` 更新 guest 显示侧 frame-rate limiter，而 `nv_virtual.c:1170-1178` / `1364-1375` 还会在 license-state change 事件后重查显示参数与 maxPixels；
   - `kernel_graphics.c` 会裁剪 Quadro / VGX / GeForce 相关图形 capability；
   - `gpu_branding.c` 会据此修正最终对外暴露的品牌位。
-- 所以 `sunlock` 作用的不是单个业务点，而是**状态码生成 → 输出结构写回 → host 同步 → 上层查询消费** 这一整段尾部承接链。
+- 于是从完整链条看，`sunlock` 影响的是：
+  1. `_nv019510rm` 一类内部 helper 先把上游 capability / license 组合压成 state code；
+  2. `_nv030355rm` / `_nv030331rm` 再把这组结果写回并挂接到更高层状态；
+  3. `gridlicmgrSetLicenseStateOnHost_Wrapper()` 把结果同步回 host，并经 host vGPU device API 落成 `guestVmInfo.licenseState / frameRateLimit` 与 `LICENSE_STATE_CHANGED` 事件；
+  4. `subdeviceCtrlCmdGpuGetGridUnlicensedStateMachineInfo_IMPL()` 再把这组状态暴露成公开的 `currentState / fpsValue / cudaSleepInterval` 控制返回值；
+  5. NVML、CUDA 和 guest 显示栈分别把它消费成 `NVML_GRID_LICENSE_STATE_*`、`CUDA_ERROR_DEVICE_NOT_LICENSED` / `cuosSleep()` 延迟，以及 frame-rate limiter / maxPixels 刷新；
+  6. `NV2080_CTRL_GPU_INFO_INDEX_TESLA_ENABLE`、NVML brand、graphics caps、brand caps 再把同一组中间态折叠成用户真正能看到的“这张卡算哪一类产品”。
+- 所以 `sunlock` 作用的不是单个业务点，而是**状态码生成 → 输出结构写回 → host 同步 → 公开控制返回 → NVML/CUDA/guest 显示栈消费 → 品牌与 capability 折叠** 这一整段尾部承接链。
 
 ---
 
@@ -1624,6 +1748,7 @@ if (gpuGetIsGridUnlicensedTesla(pGpu->gpuInstance))
 ### B. IDA 落点
 
 - 命中函数：`_nv026896rm @ 0x33E70`
+- 已确认 caller：`rm_set_rm_firmware_requested() @ 0xAE5FE0`
 
 反编译显示它是一个很小的布尔 helper：
 
@@ -1633,6 +1758,31 @@ result = nv026921rm(a1, a2, a3, v9 + 15);
 ...
 *a5 = result;
 ```
+
+这条 helper 现在已经可以更精确地放回 caller `rm_set_rm_firmware_requested()` 里理解：
+
+- `*a5` 更接近后续是否请求 firmware 的候选结果；
+- `*a6` 保留了来自 `a4 & 0x10` 的另一位策略输出；
+- 调用点就发生在 `rm_set_rm_firmware_requested()` 里正式写入 `nv->request_firmware` / `nv->allow_fallback_to_monolithic_rm` 之前。
+
+也就是说，它不是泛泛的 capability 检查，而是 **直接参与“要不要请求 firmware、允不允许后续回退”这组宿主启动路线参数的生成**。
+
+更关键的是，`nv_hooks.c` 里的 patch 偏移是按 `blob - 0x40` 坐标系写的，所以：
+
+```asm
+0x33EA2  test al, al
+0x33EA4  jz   short loc_33EC1
+0x33EA9  mov  eax, 1
+0x33EAE  cmp  ebx, 1
+0x33EB1  jz   short loc_33EC1
+...
+0x33EC1  mov  [r12], al
+```
+
+- `0x00033EE5` 实际命中的是 IDA 里的 `0x33EA5`，也就是第一条 `jz short loc_33EC1` 的位移字节；把 `0x1B` 改成 `0x00` 后，这条“helper 失败就直接跳到尾部”的短跳等效于被中和掉；
+- `0x00033EF1` 实际命中的是 IDA 里的 `0x33EB1`，也就是第二条 `jz short loc_33EC1` 的 opcode；把 `0x74` 改成 `0xEB` 后，这条条件跳转被改成了无条件跳转。
+
+两者组合起来，效果已经不只是抽象的“更容易继续”，而是 **在 helper 里直接去掉一条失败短路，再把后一条成功分支改成无条件成功分支**。从现有反汇编路径看，只要执行到这组指令，`*a5` 在 helper 内部就会被强制写成成功值 `1`：前面的 `test al, al` 失败不再能把路径短路掉，后面的 `cmp ebx, 1` 也不再能把结果拉回条件分支。换句话说，这组 patch 改的不是“返回 1 的概率更高”这么弱的效果，而是 **把这条前置 helper 的 request-firmware 候选结果几乎硬推成了真**；只是 caller 在 helper 之后仍然可能基于更高层的 platform/policy 条件把最终结果重新压回保守值。
 
 ### C. 源码映射
 
@@ -1656,20 +1806,29 @@ if (UPROC_ENG_ARCH_FALCON(pFlcn) &&
 }
 ```
 
-当前置信度：**中等偏低**。
+当前置信度：**中等**。更准确地说：对 caller `rm_set_rm_firmware_requested()` 的对应是高置信；对它在源码里更接近 `gsp.c` 哪个 helper 语义、以及 `nv026921rm()` 具体对应哪一段小 helper 链，仍是中等。
 
 ### D. 双层等效 patch
 
 **业务层等效 patch：**
 
-- 放宽一条与 GSP / vGPU / displayless 相关的 capability helper，使上游更容易把当前环境视为“允许继续”。
+- 不只是泛泛地“放宽一个 helper”，而是把 `rm_set_rm_firmware_requested()` 前面的一个 firmware-request 候选生成 helper 改成：
+  - 去掉一条失败短路；
+  - 再把后一条条件成功分支改成无条件成功分支；
+- 从业务效果看，它更接近 **强行保住“继续考虑 firmware / GSP 路线”的候选资格**，而不是在最前面的 capability helper 阶段就被否掉。
+- 但这仍不是最终裁决：后面的 `bFirmwareCapable`、registry/policy、firmware fetch、firmware validation、`kgspInitRm()` 以及 fallback 逻辑依旧会继续决定宿主最终是成功进入 GSP、回退到 monolithic RM，还是直接初始化失败。
 
 **字节层等效 patch：**
 
 ```text
-0x00033EE5: 1B -> 00
-0x00033EF1: 74 -> EB
+0x00033EE5: 1B -> 00   ; neutralize the first short-jump after `test al, al`
+0x00033EF1: 74 -> EB   ; turn the second `jz` after `cmp ebx, 1` into unconditional jump
 ```
+
+把这两项放回 `_nv026896rm` 的局部控制流里看，它们分别对应：
+
+- 不再因为 `nv026921rm(...)` 给出的失败结果而立刻短路到尾部；
+- 不再要求 `ebx == 1` 这个附加条件成立才进入成功落点。
 
 ### E. patch 前后业务影响
 
@@ -1688,7 +1847,7 @@ if (UPROC_ENG_ARCH_FALCON(pFlcn) &&
 **patch 后：**
 
 - `gspvgpu` 的业务意义，是削弱这一前置 helper 的否定分支，让系统在 vGPU / displayless 组合下更容易继续走 GSP 相关初始化链。
-- 这并不等于“强制加载 GSP”，而是先把最前面的 capability 裁决往“允许继续”方向拨动；后面的固件请求、skip-load、displayless 特判仍然会继续生效。
+- 更精确地说，它不是直接替宿主把 `request_firmware` 最终写成真，而是先在 helper 层把“请求 firmware 的候选结果”硬推向成功；后面的固件请求、skip-load、displayless 特判以及 fallback 逻辑仍然会继续生效。
 - 因此它的价值更偏向：
   - **减少 GSP 前置裁决过早否决 unlock 场景的概率**；
   - 而不是直接替代 `gsp.c` 里的真正固件装载与 skip-load 逻辑。
@@ -1704,13 +1863,32 @@ if (UPROC_ENG_ARCH_FALCON(pFlcn) &&
 - 这条链在 `osinit.c` 里还会继续体现成两个紧接着的分叉：
   - `nv->request_firmware` 为真时，先决定是否取 `gsp.bin` 并把 `nv->request_fw_client_rm` 置位；
   - 之后再由 `kgspInitRm()` 真正尝试进入 GSP client RM，失败时根据 `nv->allow_fallback_to_monolithic_rm` 决定是 hard fail 还是退回 monolithic RM。
-- 因而 `gspvgpu` 的最终业务意义，不只是“某个 helper 更容易返回 true”，而是它会改变 **宿主驱动到底尝不尝试走 GSP 这条初始化路线**，以及失败时是“直接终止”还是“有资格回退”。
+- 因而 `gspvgpu` 的最终业务意义，不只是“某个 helper 更容易返回 true”，而是它会改变 **宿主驱动到底有没有资格进入 GSP 请求路径**，以及失败时是“直接终止”还是“有资格回退”。
 - 从 host/guest 的最终可见结果看：
   - host 侧会更早决定是否把当前 GPU 归入“尝试 firmware client RM / GSP”的路线；
   - 如果这条路线根本不尝试，guest 后面依赖的一些 capability / display 相关路径连进入机会都没有；
   - 如果这条路线被放行，后面即使仍可能因为 displayless 特判或 skip-load 回退，至少已经从“前置 helper 直接否决”升级成“真正进入 GSP 路线再决定成败”；
   - 宿主机上连 `/proc` 暴露面的 `GPU Firmware` 字段也会受这条路线影响：`rm_get_firmware_version()` 只有在 `request_firmware` 路径成立时才会返回固件版本或 `N/A`，否则该字段直接为空，不会被 `nv-procfs` 打印出来；
   - 换句话说，`gspvgpu` 不只是影响内部初始化岔路，连宿主机最终给用户看的“这张卡有没有走到 firmware/GSP 路线”都能留下直接痕迹。
+- 再压到更具体的宿主可见失败结果，`osinit.c` 已经把几类 GSP 失败路径拆得很清楚：
+  - 取不到 `gsp.bin` 且禁止回退时，会落成 `RM_INIT_FIRMWARE_FETCH_FAILED`；
+  - `gsp.bin` 哈希 / 版本校验不过时，会落成 `RM_INIT_FIRMWARE_VALIDATION_FAILED`；
+  - `kgspInitRm()` 真正起 GSP client RM 失败时，会打印 `Cannot initialize GSP firmware RM`，并落成 `RM_INIT_FIRMWARE_INIT_FAILED`；
+  - 已经请求了 firmware client RM、但中途没能真正启用，而且又禁止回退时，会落成 `RM_INIT_FIRMWARE_POLICY_FAILED`；
+  - 只有在允许回退时，宿主日志里才会明确出现 `Falling back to monolithic RM`。
+- 因此从宿主机运维视角看，`gspvgpu` 带来的不是单一“成功/失败”两态，而更像三态：
+  1. **根本没走 firmware 路线**：`/proc` 里没有 `GPU Firmware:` 字段；
+  2. **尝试走了 firmware 路线，但没真正成功**：`/proc` 里字段存在但可能是 `N/A`，同时日志或 init status 会落到 fetch/validation/init/policy 失败之一；
+  3. **真正走通了 GSP 路线**：`/proc` 里能看到实际 firmware version。
+- 更关键的是，同样是“GSP 路线失败”，在允许回退和禁止回退两种策略下，宿主机最终行为完全不同：
+  - **允许回退**时，失败会表现成日志里的 `Falling back to monolithic RM`，驱动仍可能继续起来；
+  - **禁止回退**时，同类失败会直接落成 `RM_INIT_FIRMWARE_FETCH_FAILED / VALIDATION_FAILED / INIT_FAILED / POLICY_FAILED` 之一，驱动初始化在 `shutdown` 路径终止。
+- 甚至在“主流程没挂，但 GSP 附带资源不完整”的情况下，宿主机也会留下直接痕迹：`gsp_log.bin` 缺失不会让初始化失败，但日志里会明确打印 `Failed to load gsp_log.bin, no GSP-RM logs will be printed (non-fatal)`。这说明 `gspvgpu` 不只影响“能不能进 GSP”，还会影响宿主机后续有没有足够的 GSP 诊断可见性。
+- 再往实处说，`gspvgpu` 影响的不是抽象“内部路线”，而是宿主机真正能观察到的一组外部信号：
+  - init status 是否落到 `RM_INIT_FIRMWARE_FETCH_FAILED / VALIDATION_FAILED / INIT_FAILED / POLICY_FAILED`；
+  - 内核日志里是否出现 `Cannot initialize GSP firmware RM` 或 `Falling back to monolithic RM`；
+  - `/proc/driver/nvidia/gpus/*/information` 一类信息面里，`GPU Firmware:` 字段是不存在、是 `N/A`，还是一个真实版本串。
+- 因此从运维与排障视角看，`gspvgpu` 的价值不只是“让某段 capability helper 更容易放行”，而是它会直接改变宿主机在 **启动是否成功、日志长什么样、/proc 暴露什么固件状态** 这三类信号上的最终表现。
 
 ```c
 // osapi.c
@@ -1727,7 +1905,7 @@ if (firmware_version[0] != '\0')
 }
 ```
 
-这说明 `gspvgpu` 的影响不只体现在“内部是否去调 `kgspInitRm()`”，还会直接体现在宿主机对外可见的 firmware 路线与 firmware 信息暴露上。
+这说明 `gspvgpu` 的影响不只体现在“内部是否去调 `kgspInitRm()`”，还会直接体现在宿主机对外可见的 firmware 路线、失败码、日志以及 firmware 信息暴露上。
 ---
 
 ## 6. `NV_GRID_BUILD`：`general` 组
