@@ -357,10 +357,15 @@ static NV_STATUS CustomChipInfoGetNameAscii(OBJGPU *pGpu, NvU16 devId, NvU16 gpu
 
 - `_nv026445rm` 明确读取 `a1+2722 / a1+2730`，也就是设备 / 子设备标识；
 - 它在二进制里扫描 `nv039110rm / byte_C231A2` 这类静态表；
-- 这类“按 `devId/subSysId` 查表并构造一个短结果块”的形状，既像设备名 / 设备信息查表，也像 pGPU identity 编码前的身份归一化；
-- 它的 caller `_nv026708rm` 明显处于设备初始化链中，因此当前最稳妥的结论仍然是“设备身份处理链”，而不是字符串格式化链本身。
+- 它还会先把 `a1 + 18858 .. a1 + 18898` 这一段结果区整体初始化，再通过多次 `nv012335rm()` 把匹配到的表项折叠进去；这更像**表驱动的身份分类/能力编码生成**，而不是单纯取名字字符串；
+- 它的 caller ` _nv026708rm` 已确认会在更高层流程里先跑 capability / mode 检查，再调用 `_nv026445rm`，随后继续进入 `_nv000069rm`、`_nv042002rm`、`_nv042223rm` 等后续 override / feature helper；
+- 这类“按 `devId/subSysId` 查表并构造一个短结果块”的形状，既像设备名 / 设备信息查表，也像 pGPU identity 编码前的身份归一化，因此当前最稳妥的结论仍然是“设备身份处理链”，而不是字符串格式化链本身。
 
-当前置信度：**中等**。
+当前置信度更适合拆开写：
+
+- 对 `_nv026445rm` 是一条 **device/subdevice 驱动的表查找与结果块生成链**、以及它位于 `_nv026708rm` 初始化中段这一点：**高置信**；
+- 对它最终会影响到 `vgpuconfigapiCtrlCmdVgpuConfigGetPgpuMetadataString_IMPL()` 这类公开 pGPU metadata encoding 消费链：**高置信**；
+- 对它在公开源码里更接近 `vgpu_mgr.c / kernel_vgpu_mgr.c` 的 pGPU identity 编码语义，还是更接近 `gpu_name.c` 的名字/设备信息 helper：**中等**。
 
 更稳妥的表述是：
 
@@ -368,7 +373,7 @@ static NV_STATUS CustomChipInfoGetNameAscii(OBJGPU *pGpu, NvU16 devId, NvU16 gpu
 - 若按业务职责看，更接近 `vgpu_mgr.c / kernel_vgpu_mgr.c` 的 pGPU identity / migration 编码语义；
 - 若按二进制“查静态表、输出短结果块”的形状看，则又与 `gpu_name.c` 的 `ChipInfoGetNameAscii / CustomChipInfoGetNameAscii` 这类 helper 有相似性；
 - 因此当前还不建议把 `_nv026445rm` 直接写成某一个公开函数的 100% 逐行直译。
-- 但从 caller 关系看，它的位置已经很清楚：`_nv026708rm` 会在设备初始化中先跑一串 capability / mode 检查，再调用 `_nv026445rm`，然后继续执行覆盖表、override 与后续对象初始化 helper。这说明 `vupdevid` 改的是**初始化中段的身份传播点**，不是最终展示层或最终控制命令层。
+- 但从 caller 关系看，它的位置已经很清楚：`_nv026708rm` 会在设备初始化中先跑一串 capability / mode 检查，再调用 `_nv026445rm`，随后立刻进入另一段按 `device id` 选表、做 override 与后续对象初始化 helper 的流程。这说明 `vupdevid` 改的是**初始化中段的身份传播点**，不是最终展示层或最终控制命令层。
 
 ### E. 双层等效 patch
 
@@ -429,7 +434,7 @@ static NV_STATUS CustomChipInfoGetNameAscii(OBJGPU *pGpu, NvU16 devId, NvU16 gpu
 - 也就是说，`vupdevid` 的最终业务效果很像：
   - 先改“这张宿主卡在 RM 眼里是谁”；
   - 再让后续所有“这张卡能不能承接哪些 profile” 的判断一起跟着改；
-  - 最后把这组变化体现在 **mdev / vGPU config 查询接口实际返回的可创建 profile 列表** 上，而不只是停留在内部状态。
+  - 最后把这组变化体现在 **mdev / vGPU config 查询接口实际返回的可创建 profile 列表**、以及 migration 兼容所依赖的 pGPU metadata string 上，而不只是停留在内部状态。
 - 对外部使用者来说，这意味着：
   - host 侧管理面查询“这张卡现在有哪些 creatable vGPU types”时，返回值本身就可能改变；
   - 这类返回值会沿着 `vgpuconfigapiCtrlCmdVgpuConfigGetCreatableVgpuTypes_IMPL()` 这类控制接口真正暴露给上层管理面，而不是只停在 RM 内部；
@@ -450,12 +455,14 @@ static NV_STATUS CustomChipInfoGetNameAscii(OBJGPU *pGpu, NvU16 devId, NvU16 gpu
   - `pdevId / vdevId / gpuInstanceProfileId` 这类会继续暴露给工具层的设备与实例标识；
   - 以及 NVML 最终返回给用户态工具的 `vgpu type name/class/frame rate limit/max resolution` 这些直接展示值。
 - 这条外显链还不只停在 NVML。当前源码里 `drivers/gpgpu/cuda/src/cui/dmal/rm/rm_control_al.c:2364-2371` 会通过 `NVA080_CTRL_CMD_VGPU_GET_CONFIG` 读取 `cudaEnabled`，再把它折叠成 `vgpuCaps->isCudaCapable`；而 `cuictx.c:4134-4136` 又会在这个位为假时直接报 `CUDA is not supported on this vGPU profile`。这意味着一旦 `vupdevid` 把宿主身份切到另一组 profile 家族，后续 guest 侧看到的也不只是“名字和 FRL 变了”，连 CUDA capability 判断和最终报错行为都可能跟着切换。
-- 换句话说，`vupdevid` 最终影响的不是单一控制面，而是 **可创建列表 → type 元数据 → NVML 静态属性 → CUDA capability/报错行为** 这一整条 profile 属性传播链。
+- 换句话说，`vupdevid` 最终影响的不是单一控制面，而是 **metadata string / migration 兼容 → 可创建列表 → type 元数据 → NVML 静态属性 → CUDA capability/报错行为** 这一整条 profile 属性传播链。
 - 再往下压一层源码，`kvgpumgrGetCreatableVgpuTypes()` 不是简单把一个缓存数组原样抄出去，而是会遍历 `pgpuInfo->vgpuTypes[]`，逐项调用 `kvgpumgrCheckVgpuTypeCreatable()` 过滤，只有检查通过的项才会写进 `vgpuTypes[*numVgpuTypes]` 并增加计数。
-- 这意味着 `vupdevid` 改掉的“宿主是谁”并不会只影响 profile 导入阶段一次，而是会继续参与 **导入 → creatable 判定 → 控制接口返回** 这三层链：
+- 这意味着 `vupdevid` 改掉的“宿主是谁”并不会只影响 profile 导入阶段一次，而是会继续参与 **metadata 编码 → creatable 判定 → 控制接口返回 / 迁移兼容比较** 这几层链：
   1. 先在 `vgpuMgrGetPgpuDevIdEncoding()` / `vgpuMgrGetPgpuSubdevIdEncoding()` 里生成伪装后的 identity / alias encoding；
   2. 再让 `vgpuMgrCheckVgpuTypeCreatable()` / `kvgpumgrCheckVgpuTypeCreatable()` 以这套身份去筛选哪些 type 还算“当前宿主可创建”；
-  3. 最后由 `vgpuconfigapiCtrlCmdVgpuConfigGetCreatableVgpuTypes_IMPL()` 把筛过的 `numVgpuTypes` 与 `vgpuTypes[]` 原样回填给控制调用者。
+  3. 同时让 `vgpuconfigapiCtrlCmdVgpuConfigGetPgpuMetadataString_IMPL()` 把这套 encoding 继续拼进 pGPU metadata string；
+  4. `apps/nvml/dmal/rm/rm_vgpu.c:442-470` 的 `vgpuDeviceGetPgpuMetadataString()` 又会直接把这段字符串通过 `NVA081_CTRL_CMD_VGPU_CONFIG_GET_PGPU_METADATA_STRING` 拉到用户态；
+  5. 最后由 `vgpuconfigapiCtrlCmdVgpuConfigGetCreatableVgpuTypes_IMPL()` 把筛过的 `numVgpuTypes` 与 `vgpuTypes[]` 原样回填给控制调用者，并由 NVML 的 `tsapiGetVgpuCompatibility()` 用 `strcmp(vgpuMetadataInternal->opaqueData.pgpuMetadataString, pgpuMetadataInternal->opaqueData.pgpuMetadataString)` 比较 migration 兼容性。
 - 因而从外部视角看，`vupdevid` 带来的不是单纯“内部 alias 变了”，而是 **host 对外公布的 creatable profile 清单本身被重算了一遍**。只要某个 `vgpuTypeId` 在这套伪装身份下能通过 `CheckVgpuTypeCreatable`，它就会真正进入返回数组；反过来，原本可见的 type 也可能因为这套新身份被过滤掉。
 - 而且这条属性传播链不会停在 RM 私有控制面：
   - `hostvgpudeviceapiCtrlCmdGetVgpuTypeInfo_IMPL()` / `vgpuconfigapiCtrlCmdVgpuConfigGetVgpuTypeInfo_IMPL()` 会把 `vgpuName`、`vgpuClass`、`maxResolutionX/Y`、`maxPixels`、`frlConfig`、`cudaEnabled`、`licensedProductName` 等字段原样返回；
@@ -647,6 +654,18 @@ cmpb  $0, 0x824(%r13)
 ret
 ```
 
+把它放回 `_nv036968rm` 的局部控制流里，关键几条指令更接近：
+
+```asm
+0x416B9C  cmp  byte ptr [r13+0x824], 0
+0x416BA4  jz   loc_416BBA
+0x416BA6  cmp  byte ptr [rbx+0x50C], 0
+0x416BAD  jz   loc_416C50
+0x416BB3  mov  byte ptr [rbx+0x4FE], 0
+```
+
+这说明 hook 真正能改动的是第二个比较项 `rbx + 0x50C`，也就是是否跳去 `loc_416C50` 这条更保守的后置分支，而不是最前面的 host 条件位本身。
+
 因此它的**字节 / 插桩层等效 patch**是：
 
 ```text
@@ -670,6 +689,16 @@ static void vup_hook_cudahost(u8 *flag)
 ```
 
 也就是说，它会在原始分支判断前，先把某个对象内的 flag 改成模块参数指定值，再让原逻辑继续执行。
+
+而且这条 hook 只会在第一道 host 条件没有把路径短路掉时才真正产生后果：如果 `cmp byte ptr [r13+0x824], 0` 直接让后面的 `jz loc_416BBA` 成立，那么被覆写的 `rbx + 0x50C` 根本不会再被消费；只有 host 条件允许继续时，`cudahost` 写进去的值才会真正改变后面的状态落支。
+
+但结合当前反汇编，`cudahost` 更准确的字节级语义不是“改掉被 `cmp [r13+0x824], 0` 读取的 host 条件位”，而是：
+
+- hook 实际改写的是 `lea 0x50c(%rbx), %rdi` 指向的那个字节，也就是 `_nv036968rm` 里后续读到的 `a2 + 1292`；
+- 原函数对 `cmp byte ptr [r13+0x824], 0` 这条 host 条件检查仍然会照常执行；
+- 只有在这条 host 条件允许继续后，后续控制流才会再看 `a2 + 1292`，并在“清 `a2 + 1278`”和“清 `a2 + 1274`”两条后置状态写回之间二选一。
+
+换句话说，`cudahost` 改的不是最前面的 host 输入位本身，而是 **host 条件通过之后、后续状态机到底落到哪一支**。
 
 ### D. 源码映射
 
@@ -728,16 +757,21 @@ perfCudaLimitEvaluateLimit_IMPL
 
 - `_nv036968rm` 同样是一条多入口调用的 CUDA host / CUDA limit 控制链；
 - 二进制里既有多个 early-return，也有多条 error/log path，并持续改写 `a2 + 1274 / 1278 / 1292` 一类状态位；
+- 当前 IDA 已确认它至少被 `_nv050691rm` 与 `_nv037077rm` 这两条更高层 host 路径复用，说明它不是某个一锤子买卖的小 helper，而是一段会被多个上层流程消费的中段状态整理逻辑；
+- 这两个 caller 还说明它的后果不只停在局部 flag：`_nv050691rm` 会在失败时直接中断后续输出尺寸/偏移计算，而 `_nv037077rm` 会在失败时中断后续设备状态写回；
 - 这和 `kern_cuda_limit.c` / `cuda_limit.c` 中“启停 / 评估 / 回写 CUDA limit 状态”的职责最接近。
 
-当前置信度：**中等**。
+当前置信度更适合拆开写：
+
+- 对 `_nv036968rm` 的局部控制流、被 hook 覆写的是 `rbx + 0x50C` 而不是最前面的 host 条件位、以及它会改动 `a2 + 1274 / 1278 / 1292` 这组后置状态链：**高置信**；
+- 对它在公开源码里最接近 `kern_cuda_limit.c / cuda_limit.c` 这组 CUDA limit 路径、以及这些状态位在高层业务语义上具体对应哪一个公开字段名：**中等**。
 
 ### E. 双层等效 patch
 
 **业务层等效 patch：**
 
-- 在原逻辑读取某个 host / capability flag 之前，先允许模块参数强制覆写它。
-- 这样后续分支会自然把当前环境视为“满足某种 host CUDA 条件”。
+- 不是真正去篡改最前面的 host 条件输入位，而是在前置 host 检查之后，允许模块参数强制覆写后置状态字节 `a2 + 1292`；
+- 这样后续分支不再完全按真实运行时状态决定是“清 `a2 + 1278` 并保留 `a2 + 1274`”，还是“把 `a2 + 1274` 清回 0”。
 
 **字节 / 插桩层等效 patch：**
 
@@ -757,10 +791,23 @@ perfCudaLimitEvaluateLimit_IMPL
 
 - 可以在分支判断前先改写该 flag；
 - 从而把原本由运行时状态决定的分支，变成可由模块参数影响的行为。
+- 从当前 `_nv036968rm` 的反编译看，这个改写会进入一条更具体的后置状态链：
+  1. 先调用 `nv037036rm(a1, a2)`；
+  2. 再把 `a2 + 1274` 先置成 `1`；
+  3. 如果某组前置条件不满足，会把 `a2 + 1274` 清回 `0`；
+  4. 如果 `a1 + 2084` 为假，函数就直接返回；
+  5. 如果 `a1 + 2084` 为真，则继续检查 hook 能改写的 `a2 + 1292`；
+  6. `a2 + 1292` 为真时，函数走“清 `a2 + 1278` 并保留当前 `a2 + 1274`”这一支；否则会把 `a2 + 1274` 清回 `0`。
+- 所以 `cudahost` 更准确的业务意义，不是“强行把某个 host bit 伪造成 true”，而是：
+  - **在 host 条件已经允许继续后，强行把后续状态机导向“保留 1274 / 清 1278”这条支路**；
+  - 避免它掉进“把 1274 再清回 0”那条更保守的支路。
 - 这对 merged driver 很关键，因为它意味着：
   - host 侧 CUDA / compute 相关限制不一定会因为同时引入 GRID/vGPU 语义而被动触发；
-  - 某些本应只在“非 CUDA host”场景下走的保守路径，可以被挡在更前面；
-  - 最终表现为：同一个 merged 包在保留 guest 能力的同时，更有机会继续保住宿主机侧 CUDA/compute 工作流。
+  - 某些本应只在“非 CUDA host”场景下走的保守路径，可以被挡在更后面；
+  - 当前最强的公开 consumer 候选仍指向 host 侧 CUDA 限速链：`perfCudaLimitEvaluateLimit_IMPL()` 会设置/清除 `NV2080_CTRL_PERF_PERF_LIMIT_ID_CUDA_MAX`，`perfctrl.c:209-247` 又会在 boost clocks 路径里决定是 honor 还是 ignore 这个 CUDA limit，并通过 `perfLimitsArbitrateAndApply()` 立即应用；
+  - 但即使先不把它完全等同到公开 CUDA limit 字段名，caller 侧的宿主后果也已经是高置信：`_nv050691rm` 与 `_nv037077rm` 都会把 `_nv036968rm()` 的返回值当成 gate，失败时直接记录错误并提前返回，成功时才继续后续输出尺寸/偏移计算或设备状态写回；
+  - 再具体一点说，`_nv050691rm` 的成功路径会继续写一组输出尺寸/偏移结果，而 `_nv037077rm` 的成功路径会继续同步一组 device/guest state 字段；因此 `cudahost` 改掉的不只是内部位图，而是 **这些更高层 host 路径还能不能把后续结果真正写回出去**；
+  - 因而即便把源码映射保持在“候选函数簇”层级，`cudahost` 最终改到的也不只是内部 flag，而是宿主机上 **某些更高层 host 路径会不会直接提前报错退出，以及在成功路径上哪些状态/尺寸/偏移结果会继续被写回** 这一类真正可见的行为；如果 CUDA limit 映射也成立，则进一步会外显到 **CUDA_MAX P-state limit 是否被维持、boost clock 路径怎么选、对应 clocks/limits 何时立即生效**。
 
 ---
 
@@ -792,7 +839,8 @@ static struct vup_patch_item vup_diff_vgpusig[] = {
 
 - 先检查条目数；
 - 再循环调用 `_nv050770rm`；
-- 每个条目大小约为 `5088` 字节。
+- 每个条目大小约为 `5088` 字节；
+- 而且它不是“尽量继续导入剩余条目”的容错循环：只要 `_nv050770rm` 对某一条返回非零，`_nv049279rm` 就会立刻中断批处理并把该错误往上返回。
 
 ### C. 源码映射
 
@@ -808,23 +856,44 @@ static struct vup_patch_item vup_diff_vgpusig[] = {
 
 - `vgpusig` 高置信落在一条 host-vGPU 配置 / type / identity 处理链上；
 - 它最接近的公开源码函数，其实已经可以进一步收窄到：
+  - `drivers/resman/kernel/vgpu/nv/vgpuconfigapi.c:306-359` `verifyVgpuSignature`
+  - `drivers/resman/kernel/vgpu/nv/vgpuconfigapi.c:361-410` `vgpuconfigapiCtrlCmdVgpuConfigSetInfo_IMPL`
   - `drivers/resman/src/kernel/virtualization/vgpu_mgr.c:424-476` `vgpuMgrCreateVgpuType`
   - `drivers/resman/src/kernel/virtualization/vgpu_mgr.c:500-589` `vgpuMgrPgpuAddVgpuType`
   - 以及 `kernel_vgpu_mgr.c` 中的同职责版本；
-- 这些函数会真正把 `vgpuType`、`maxInstance`、`numHeads`、`maxResolutionX/Y`、`maxPixels`、`frlConfig`、`cudaEnabled`、`license`、`licensedProductName` 等字段挂进 RM 的可用 type 列表；
-- 因此 `_nv050770rm` 更像是“在 type 进入 `vgpuMgrCreateVgpuType()` 之前的单条 profile 合法性门”，而不是抽象的任意布尔校验。
+- 公开源码已经明确显示：`verifyVgpuSignature()` 会解 RSA 签名、重算本地 digest，并在 digest 不匹配时直接返回错误；`vgpuconfigapiCtrlCmdVgpuConfigSetInfo_IMPL()` 则会在这个校验失败时立即返回，不再进入 `kvgpumgrPgpuAddVgpuType()`；
+- 而 `computeDigest()` 绑定进去的也不是一个很小的 identity 子集，而是一整包 profile 元数据：`vgpuType`、`pdevId/vdevId`、`fbLength`、`numHeads`、`maxInstance`、`maxResolutionX/Y`、`maxPixels`、`mappableVideoSize`、`fbReservation`、`frlConfig`、`cudaEnabled`、`eccSupported`、`gpuInstanceSize`、`multiVgpuSupported`、`gpuDirectSupported`、`nvlinkP2PSupported`、`encoderCapacity`、`bar1Length`、`vgpuName`、`vgpuClass`、`license`；
+- 当前 IDA 里 `_nv050770rm` 的局部调用链也和这条公开源码高度对齐：它会先把单条记录规整到一个约 `316` 字节的本地缓冲区，再由 `nv039231rm(..., 316, ...)` 算本地摘要、由 `nv050445rm(..., 128, ...)` 处理签名内容，最后交给 `nv044111rm()` 做 `32` 字节最终比对；
+- 这些函数又会真正把 `vgpuType`、`maxInstance`、`numHeads`、`maxResolutionX/Y`、`maxPixels`、`frlConfig`、`cudaEnabled`、`license`、`licensedProductName` 等字段挂进 RM 的可用 type 列表；导入成功后，`vgpuMgrGetLicensedProductNameForVgpuType()` / `kvgpumgrGetLicensedProductNameForVgpuType()` 还会继续为这条 type 派生 `licensedProductName`；
+- 因此 `_nv050770rm` 更像是“在 type 进入 `vgpuMgrCreateVgpuType()` 之前的单条 profile 合法性门”，而且相当大概率就贴着 **签名 / 摘要校验** 这条门，而不是抽象的任意布尔校验。
 
 ### D. 双层等效 patch
 
 **业务层等效 patch：**
 
-- 放宽一条 vGPU 配置 / 条目校验逻辑，使某个布尔判定更容易通过。
+- 不只是泛泛地“放宽一个布尔判断”，而是把单条 vGPU profile 记录导入路径上的一个失败 gate 改成更接近“默认继续”的形态；
+- 结合公开源码里 `verifyVgpuSignature()` / `vgpuconfigapiCtrlCmdVgpuConfigSetInfo_IMPL()` 的职责，这个 gate 很可能就贴着 **profile 签名 / 摘要校验失败后是否立即返回** 这一类前置合法性门。
 
 **字节层等效 patch：**
 
 ```text
 0x000BBEF0: 85 -> 31
 ```
+
+把它放回 `_nv050770rm` 的局部指令流里看：
+
+```asm
+... call <previous validation helper>
+0xBBEB0  test eax, eax
+0xBBEB2  jnz  loc_BBFE4
+```
+
+- 原始 `85 C0` 是 `test eax, eax`；
+- 改成 `31 C0` 后变成 `xor eax, eax`；
+- 结果就是把前一个 helper 的返回值直接清成 `0`，从而让后面的 `jnz loc_BBFE4` 失败分支不再成立。
+
+也就是说，这不是单纯“更容易通过”，而是 **直接把这一处 per-record validation gate 的失败返回压成成功返回**。结合当前 call graph，这里被压掉的已经不是泛化的上游布尔值，而是贴着 `nv044111rm()` 这类最终 32-byte compare 结果的失败返回。
+- 反过来说，它绕过的也不是“整条签名链的全部失败”。从当前 `_nv050770rm` 的控制流看，更早的 `nv015763rm` / `nv045250rm` / `nv050445rm` 失败、长度不对、右对齐/填充异常等错误路径都在 patch 点之前就已经各自返回了；真正被这 1 字节 patch 压掉的是 **最终 digest mismatch 这一道门**，而不是整个 RSA/摘要解析流程。
 
 ### E. patch 前后业务影响
 
@@ -840,6 +909,7 @@ static struct vup_patch_item vup_diff_vgpusig[] = {
 **patch 后：**
 
 - 这项判断被改写为更宽松的形式，等价于降低“单条 vGPU type 记录必须完全满足某个内部校验”的严格度。
+- 但从当前 `_nv050770rm` 的局部控制流看，它甚至不只是“放宽”：在 `nv039231rm(..., 316, ...)` 算出本地 32-byte digest、`nv050445rm(...)` 解出签名内容、`nv044111rm(...)` 做最终 32-byte 比对之后，这个 patch 会直接把 `test eax, eax` 改成 `xor eax, eax`，从而把**最终 digest compare 的失败结果清零**，强行让后面的失败跳转不成立。
 - 业务上，它更接近：
   - **让 host 更容易接受 vGPU profile 描述记录本身**；
   - 从而让本来会被拒掉的 `vgpuType` 仍能被挂进 `vgpuMgrCreateVgpuType()` / `vgpuMgrPgpuAddVgpuType()` 管理的 type 列表；
@@ -847,7 +917,16 @@ static struct vup_patch_item vup_diff_vgpusig[] = {
 - 这意味着 `vgpusig` 影响的是 unlock 链里非常靠前的一步：
   - **profile 有没有被 host 收下**；
   - 而不是 profile 收下之后怎么显示。
-- 换句话说，`vgpusig` 不是直接“开功能”，而是先放宽 **profile 元数据导入** 这道门。没有这一步，很多后面的 displayless、licensed feature、migration、CUDA 等调整根本没有对象可作用。
+- 而且这条影响不只体现在“后面能不能 creatable”。当前源码里：
+  - `vgpuconfigapiCtrlCmdVgpuConfigGetSupportedVgpuTypes_IMPL()` 会直接返回 `pPgpuInfo->vgpuTypes[i]->vgpuTypeId`；
+  - `apps/nvml/dmal/rm/rm_vgpu.c:8-39` 的 `deviceGetSupportedVgpus()` 又会直接调用 `NVA081_CTRL_CMD_VGPU_CONFIG_GET_SUPPORTED_VGPU_TYPES`，把这些 `vgpuTypeId` 原样拷进 `vgpuTypeIds[]`；
+  - `deviceGetCreatableVgpus()` 则会并行消费 `GET_CREATABLE_VGPU_TYPES`；
+  - `vgpuMgrCheckVgpuTypeSupported()` / `kvgpumgrCheckVgpuTypeSupported()` 又会拿 `supportedTypeIds[]` 去约束“已有 vGPU 时还能不能继续接受某个 type”；
+  - `_nv049279rm` 还会在首个失败条目上直接中断整批导入，而不是跳过坏条目继续吃后面的记录；
+  - 而由于 `computeDigest()` 本身绑定了 `cudaEnabled`、`frlConfig`、`maxPixels`、`maxResolutionX/Y`、`vgpuName`、`vgpuClass`、`license` 等字段，`vgpusig` 放行的也不只是“多一个 typeId”，而是**整包会流向 GET_VGPU_TYPE_INFO / NVML / CUDA 的 profile 元数据**；
+  - 因此 `vgpusig` 一旦让更多 profile 记录通过导入门，外部不只会在后面的 creatable 查询里看到差异，连 **NVML `deviceGetSupportedVgpus()` / `deviceGetCreatableVgpus()` 最终看到的 typeId 列表**、`GET_SUPPORTED_VGPU_TYPES` 返回值本身、批量导入是否被首个坏条目提前打断、单条 profile 暴露出来的 name/class/FRL/CUDA 能力，以及“已有实例时的 mixed-profile 兼容判断”都会一起变化。
+- 换个角度说，在未打 patch 时，只要批量导入里有一条 profile 因最终摘要不匹配被 `_nv050770rm` 拒掉，`_nv049279rm` 就会立刻终止整批导入；打了 patch 之后，这种“首个坏条目拖垮整批 profile” 的行为会被明显削弱。
+- 换句话说，`vgpusig` 不是直接“开功能”，而是先放宽 **profile 元数据导入 / 签名门** 这道门。没有这一步，很多后面的 displayless、licensed feature、migration、CUDA 等调整根本没有对象可作用。
 
 ---
 
@@ -1208,7 +1287,7 @@ gpuIsGridDisplaylessClassSupported_IMPL
   - `gpuIsGridDisplaylessClassSupported_IMPL`
 - 直接下游消费者：
   - `_nv015776rm`
-  - `_nv015782rm`
+  - `_nv015778rm`
 - 业务侧配套函数簇：
   - `drivers/resman/src/kernel/virtualization/grid/grid_features.c:170-242`
     - `enableGridFeature`
@@ -1221,7 +1300,11 @@ gpuIsGridDisplaylessClassSupported_IMPL
 
 - `_nv032676rm` 的反编译与 `_nv026510rm` 一样直接检查 `RmForceGridDisplayless`；
 - `_nv032676rm` 会根据该判定把输出字节置成 0/1；
-- 它的调用者 `_nv015776rm` / `_nv015782rm` 继续把这个布尔结果送入后续显示相关 helper，说明它不是 branding 主链，而是 displayless 支持状态的中间 helper。
+- 它的调用者不是抽象的 branding 路径，而是两条更直接的显示/类能力 consumer：
+  - `_nv015776rm` 只有在 `_nv032676rm` 把输出字节置成 1 时，才会继续调用 `nv028879rm(...)`；否则直接返回 `86`；结合 `nv028879rm()` 的局部语义，这条成功路径会继续回填一份 `256` 字节的默认显示数据块；
+  - `_nv015778rm` 也只有在 `_nv032676rm` 把输出字节置成 1 时，才会继续调用 `nv028884rm / nv028881rm / nv028882rm / nv028880rm / nv028883rm` 去回填一组显示相关结果；否则同样直接失败返回；
+  - `_nv015782rm` / `_nv015783rm` 又会继续把 `_nv026510rm` 的结果折叠成“display active / display connected”这类布尔查询；
+- 这说明它不是 branding 主链，而是 displayless 支持状态的中间 gate，而且这道 gate 会直接决定后续一组显示类查询/回填路径是否还能继续。
 
 关键源码片段：
 
@@ -1264,7 +1347,11 @@ if (status == NV_OK)
 }
 ```
 
-这一项当前置信度：**中等**。
+这一项当前置信度更适合拆开写：
+
+- 对 `_nv032676rm` 与 `_nv026510rm` 同属 `GRID_DISPLAYLESS` 支持判定链、并且其输出布尔会直接 gate 后续显示相关 consumer：**高置信**；
+- 对它最终会影响 `NVA083_CTRL_CMD_VIRTUAL_DISPLAY_GET_NUM_HEADS / GET_MAX_RESOLUTION / GET_MAX_PIXELS`、default EDID、display active、display connected 这组 guest-facing 查询路径：**高置信**；
+- 对它在公开源码里究竟最接近 `gpuIsGridDisplaylessClassSupported_IMPL` 本体，还是紧贴其下游的相邻 helper：**中等**。
 
 ### D. 双层等效 patch
 
@@ -1299,6 +1386,16 @@ if (status == NV_OK)
 - 更具体地说，它是在帮 merged driver 同时保住两边语义：
   - **host 侧**：仍然保留原本的 CUDA / OpenGL / console / 初始化链；
   - **guest / GRID 侧**：仍然能得到 displayless class、licensed heads / resolution / pixels 这组派生能力。
+- 这条链的外部后果现在也可以说得更具体：
+  - `nv_virtual.c:1002-1015` 只有在 class list 中存在 `NVA083_GRID_DISPLAYLESS` 时才会真正分配 GRID displayless object；
+  - `nv_virtual.c:1324-1379` 随后会继续通过 `NVA083_CTRL_CMD_VIRTUAL_DISPLAY_GET_NUM_HEADS / GET_MAX_RESOLUTION / GET_MAX_PIXELS` 把 `numHeads`、`maxNumHeads`、每个 head 的分辨率以及 `maxPixels` 拉到 guest 显示虚拟化层；
+  - `ctrla083.h` 与 `griddisplaylessctrl.c` 也直接说明这条类的公开控制面不只含 heads/resolution/maxPixels，还包括 default EDID、display active、display connected 这些查询；
+  - `nv_virtual.c:1691-1695` 又会在类不存在时直接返回 `NV_INIT_DISP_HAL_FAILURE_FALLBACK`；
+  - 因而 `merged` 影响的不只是内部布尔，而是 guest 显示虚拟化路径到底会不会拿到 `NVA083_GRID_DISPLAYLESS` class、会不会真正完成 object allocation、能不能继续拿到 heads/resolution/maxPixels/EDID/active/connected 这组信息，以及显示 HAL 是继续初始化还是直接 fallback。
+- 再往二进制 consumer 压一层，`_nv015776rm / _nv015778rm / _nv015782rm / _nv015783rm` 已经把这条链拆成了几类直接后果：
+  - 有的路径会把 `GRID_DISPLAYLESS` 支持结果折成默认显示数据块回填；
+  - 有的路径会回填 numHeads / maxNumHeads / maxPixels / 逐 head 显示参数；
+  - 还有的路径会把它折成“display active / display connected”这类布尔查询。
 - 所以 `merged` 的真正业务作用不是“再多开一个功能”，而是让 merged 产物不要在 host 语义和 GRID displayless 语义之间二选一。
 
 ---
