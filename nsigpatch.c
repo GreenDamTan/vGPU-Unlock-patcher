@@ -30,6 +30,7 @@ static const int patch_old5[] = { 0x48, 0x89, -1, -1, 0x08, 0x55, 0x56, 0x57, 0x
 static const int patch_old6[] = { 0x48, 0x83, 0xEC, 0x28, 0x48, 0x8B, 0x05,  -1 ,  -1 ,  -1 ,  -1 , 0x48, 0x85, 0xC0, 0x75, 0x1E };
 static const int patch_old7[] = { 0x4C, 0x8B,  -1 , 0x55,  -1 ,  -1 ,  -1 ,  -1 ,  -1 ,  -1 ,  -1 ,  -1  };
 static const int patch_old8[] = { 0x48, 0x8B,  -1 , 0x55,  -1 ,  -1 ,  -1 ,  -1 ,  -1 ,  -1 ,  -1 ,  -1  };
+static const int patch_old9[] = { 0x48, 0x8B, 0xC4, 0x4C, 0x89, 0x40, 0x18, 0x55, 0x53, 0x56, 0x48, 0x8D, 0x68, -1, 0x48, 0x81, 0xEC };
 
 static const uint8_t patch_new[] = { 0x31, 0xc0, 0xff, 0xc8, 0x48, 0x85, 0xd2, 0x74, 0x02, 0x89, 0x02, 0xc3 };
 
@@ -40,14 +41,13 @@ static const int patch32_old3[] = { 0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8, 0x81, 0x
 
 static const int patch32_old4[] = { 0xA1,  -1 ,  -1 ,  -1 ,  -1 , 0x85, 0xC0, 0x75,  -1 , 0x50, 0x68 };
 static const int patch32_old5[] = { 0xA1,  -1 ,  -1 ,  -1 ,  -1 , 0x56, 0x85, 0xC0, 0x75 };
-static const int patch32_old6[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x6C, 0xA1,  -1 ,  -1 ,  -1 ,  -1 , 0x33, 0xC5, 0x89, 0x45, 0xFC };
+static const int patch32_old6[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, -1, 0xA1, -1, -1, -1, -1, 0x33, 0xC5, 0x89, 0x45, -1 };
 static const int patch32_old7[] = { 0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8, 0x83, 0xEC };
 static const int patch32_old8[] = { 0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF0, 0x81, 0xEC };
 static const int patch32_old9[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC,  -1 , 0x53, 0x56, 0x33, 0xDB };
 
-static const int patch32_new[]  = { 0x31, 0xC0, 0x48, 0x85, 0xD2, 0x74, 0x02, 0x89, 0x02, 0xC3 };
-static const int patch32_new2[] = { 0x8B, 0x44, 0x24, 0x08, 0x85, 0xc0, 0x75, 0x06, 0xeb, 0x08,   -1,   -1,   -1,   -1, 0x89, 0x00, 0x31, 0xc0, 0x48, 0xc2, 0x08, 0x00 };
-static const int patch32_new3[] = { 0x8B, 0x44, 0x24, 0x08, 0xeb, 0x05,   -1,   -1,   -1,   -1,   -1, 0x85, 0xc0, 0x74, 0x02, 0x89, 0x00, 0x31, 0xc0, 0x48, 0xc2, 0x08, 0x00 };
+static const uint8_t patch32_new[] = { 0x31, 0xC0, 0x48, 0x85, 0xD2, 0x74, 0x02, 0x89, 0x02 };
+static const uint8_t patch32_stack[] = { 0x8B, 0x54, 0x24, 0x08, 0x31, 0xC0, 0x48, 0x85, 0xD2, 0x74, 0x02, 0x89, 0x02 };
 
 
 uint8_t *find_xref(const uint8_t *buf, int bufsize,
@@ -182,6 +182,59 @@ uint8_t *find_entry(const uint8_t *file, const uint8_t *cp, const int *templ, in
         cp--;
     }
 
+    return NULL;
+}
+
+uint8_t *find_entry32(const uint8_t *file, const uint8_t *cp, int loader)
+{
+    const struct {
+        const int *bytes;
+        size_t count;
+    } patterns[] = {
+#define ENTRY32(name) { name, sizeof(name) / sizeof(name[0]) }
+        ENTRY32(patch32_old), ENTRY32(patch32_old2), ENTRY32(patch32_old3),
+        ENTRY32(patch32_old6), ENTRY32(patch32_old7), ENTRY32(patch32_old8),
+        ENTRY32(patch32_old9), ENTRY32(patch32_old4), ENTRY32(patch32_old5)
+#undef ENTRY32
+    };
+    const uint8_t *start = cp;
+    // 无栈帧的 lazy-loader 模板只用于第一层，避免跨函数命中邻近包装器。
+    size_t count = sizeof(patterns) / sizeof(patterns[0]) - (loader ? 0 : 2);
+
+    for (; cp > file && start - cp < 384; cp--) {
+        for (size_t p = 0; p < count; p++) {
+            size_t i;
+            for (i = 0; i < patterns[p].count; i++)
+                if (patterns[p].bytes[i] >= 0 && cp[i] != patterns[p].bytes[i])
+                    break;
+            if (i == patterns[p].count)
+                return (uint8_t *)cp;
+        }
+    }
+    return NULL;
+}
+
+const uint8_t *find_return32(const uint8_t *file, size_t size, const uint8_t *entry)
+{
+    static const uint8_t epilogue[] = { 0x8B, 0xE5, 0x5D };
+    size_t available = size - (entry - file);
+    if (available > 0x1000)
+        available = 0x1000;
+    static const uint8_t frame[] = { 0x55, 0x8B, 0xEC };
+    const uint8_t *next = available > sizeof(frame) ?
+        memmem(entry + sizeof(frame), available - sizeof(frame), frame, sizeof(frame)) : NULL;
+    // 栈帧函数的返回匹配止于下一个入口，避免借用邻函数的清栈方式。
+    if (next != NULL)
+        available = next - entry;
+    const uint8_t *end = memmem(entry, available, epilogue, sizeof(epilogue));
+    if (end == NULL)
+        return NULL;
+    end += sizeof(epilogue);
+    if (end < file + size && *end == 0xC3)
+        return end;
+    if (end + 3 <= file + size && *end == 0xC2 && end[2] == 0 &&
+        (end[1] == 4 || end[1] == 8 || end[1] == 12))
+        return end;
     return NULL;
 }
 
@@ -327,6 +380,8 @@ int main(int argc, char **argv)
                         cp = find_entry(file, p2, patch_old7, sizeof(patch_old7) / sizeof(patch_old7[0]));
                         if (cp == NULL)
                             cp = find_entry(file, p2, patch_old8, sizeof(patch_old8) / sizeof(patch_old8[0]));
+                        if (cp == NULL)
+                            cp = find_entry(file, p2, patch_old9, sizeof(patch_old9) / sizeof(patch_old9[0]));
                     }
                 }
             }
@@ -339,55 +394,39 @@ int main(int argc, char **argv)
             } else
                 printf("nsigpatch %s failed to locate function entry\n", argv[1]);
             break;
-        case 32:
-            p2 = p1;
-            for (i = 0; i < 2 && p1 != NULL; i++) {
-                cp = find_entry(file, p1, patch32_old, sizeof(patch32_old) / sizeof(patch32_old[0]));
-                if (cp == NULL)
-                    cp = find_entry(file, p1, patch32_old2, sizeof(patch32_old2) / sizeof(patch32_old2[0]));
-                if (cp == NULL)
-                    cp = find_entry(file, p1, patch32_old3, sizeof(patch32_old3) / sizeof(patch32_old3[0]));
-                if (cp == NULL)
-                    cp = find_entry(file, p1, patch32_old4, sizeof(patch32_old4) / sizeof(patch32_old4[0]));
-                if (cp == NULL)
-                    cp = find_entry(file, p1, patch32_old5, sizeof(patch32_old5) / sizeof(patch32_old5[0]));
-                if (cp == NULL)
-                    cp = find_entry(file, p1, patch32_old6, sizeof(patch32_old6) / sizeof(patch32_old6[0]));
-                if (cp == NULL)
-                    cp = find_entry(file, p1, patch32_old7, sizeof(patch32_old7) / sizeof(patch32_old7[0]));
-                if (cp == NULL)
-                    cp = find_entry(file, p1, patch32_old8, sizeof(patch32_old8) / sizeof(patch32_old8[0]));
-                if (cp == NULL)
-                    cp = find_entry(file, p1, patch32_old9, sizeof(patch32_old9) / sizeof(patch32_old9[0]));
-                if (1 /* force 2nd level for now */) {
-                    if (cp != NULL && i == 0) {
-                        p1 = find_rel_xref(file, st.st_size,
-                                           call_disp, sizeof(call_disp),
-                                           cp, NULL);
-                        printf("nsigpatch %s found call rel at %08lx\n", argv[1], p1 - file);
-                    }
-                    //if (cp != NULL && i == 1)
-                    //    printf("nsigpatch %s found call entry: %08lx\n", argv[1], cp - file);
+        case 32: {
+            int stack_output = p1[0] == push_offs[0];
+            cp = find_entry32(file, p1, 1);
+            if (cp != NULL) {
+                p2 = find_rel_xref(file, st.st_size, call_disp, sizeof(call_disp), cp, NULL);
+                cp = NULL;
+                if (p2 != NULL) {
+                    printf("nsigpatch %s found call rel at %08lx\n", argv[1], p2 - file);
+                    cp = find_entry32(file, p2, 0);
                 }
             }
-            p1 = p2;
-
             if (cp != NULL) {
-                const int *patch32 = patch32_new;
-                int size = sizeof(patch32_new) / sizeof(patch32_new[0]);
-                if (p1[0] == push_offs[0]) {
-                    patch32 = patch32_new3;
-                    size = sizeof(patch32_new3) / sizeof(patch32_new3[0]);
+                const uint8_t *epilogue = find_return32(file, st.st_size, cp);
+                if (epilogue == NULL) {
+                    printf("nsigpatch %s failed to locate return ABI\n", argv[1]);
+                    cp = NULL;
+                    break;
                 }
+                uint8_t patch[sizeof(patch32_stack) + 3];
+                const uint8_t *body = stack_output ? patch32_stack : patch32_new;
+                size_t size = stack_output ? sizeof(patch32_stack) : sizeof(patch32_new);
+                size_t retsize = *epilogue == 0xC2 ? 3 : 1;
+                memcpy(patch, body, size);
+                memcpy(patch + size, epilogue, retsize);
+                size += retsize;
                 for (i = 0; i < size; i++) {
-                    if (patch32[i] >= 0) {
-                        printf("nsigpatch %08lX: %02X %02X\n", cp - file + i, cp[i], patch32[i]);
-                        cp[i] = patch32[i];
-                    }
+                    printf("nsigpatch %08lX: %02X %02X\n", cp - file + i, cp[i], patch[i]);
+                    cp[i] = patch[i];
                 }
             } else
                 printf("nsigpatch %s failed to locate function entry\n", argv[1]);
             break;
+        }
         }
     }
     if (cp == NULL)

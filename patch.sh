@@ -20,7 +20,7 @@ GRID="NVIDIA-Linux-x86_64-580.196.07-grid"
 #WSYS="NVIDIA-Windows-x86_64-537.70"
 #WSYS="NVIDIA-Windows-x86_64-538.33"
 #WSYS="NVIDIA-Windows-x86_64-551.61"
-WSYS="NVIDIA-Windows-x86_64-552.55"
+WSYS="NVIDIA-Windows-x86_64-582.99"
 FRANKENSTEIN=false
 
 NVOSS=false
@@ -517,44 +517,44 @@ PY
     fi
 }
 
-if $DO_WSYS && [ ! -e "${WSYS}/nvlddmkm.sys" ]; then
-    echo "source ${WSYS}/nvlddmkm.sys not found, will try to extract the installer"
-    NV_WIN_DRV_INSTALLER=`ls -1 ${VER_TARGET}*[-_]win*[-_]64bit*.exe | head -n 1`
-    [ -e "$NV_WIN_DRV_INSTALLER" ] || die "nvidia windows driver installer version $VER_TAGET not found"
-    which 7z &>/dev/null || die "install p7zip-full for 7z tool (http://p7zip.sourceforge.net/)"
-    which msexpand &>/dev/null || die "install mscompress (https://github.com/stapelberg/mscompress)"
-    rm -rf ${WSYS}
-    SYS_SRC=( "Display.Driver/nvlddmkm.sy*" )
+if $DO_WSYS; then
+    [ -f "$BASEDIR/patches/wsys-${VER_TARGET}.diff" ] || die "windows driver patch for $VER_TARGET not found"
+    WSYS_FILES=(nvlddmkm.sys)
     if $DO_LIBS; then
-        SYS_SRC+=(
-            "Display.Driver/nvd3dum.dl*"
-            "Display.Driver/nvd3dumx.dl*"
-            "Display.Driver/nvldumd.dl*"
-            "Display.Driver/nvldumdx.dl*"
-            "Display.Driver/nvoglv32.dl*"
-            "Display.Driver/nvoglv64.dl*"
-            "Display.Driver/nvwgf2um.dl*"
-            "Display.Driver/nvwgf2umx.dl*"
-        )
+        WSYS_FILES+=(nvd3dum.dll nvd3dumx.dll nvldumd.dll nvldumdx.dll nvoglv32.dll nvoglv64.dll nvwgf2um.dll nvwgf2umx.dll)
     fi
-    echo "extracting the driver installer, please wait..."
-    7z x -o${WSYS} "$NV_WIN_DRV_INSTALLER" ${SYS_SRC[*]} &>/dev/null
-    pushd ${WSYS} &>/dev/null
-    for i in ${SYS_SRC[*]}
-    do
-        if [ "${i%_}" != "${i}" ]; then
-            t=`basename "$i" | sed -e 's/sy_$/sys/' -e 's/dl_/dll/'`
-            echo "$i -> $t"
-            msexpand < $i > $t
-        else
-            t=`basename "$i"`
-            echo "$i -> $t"
-            mv $i .
-        fi
+    if [ ! -e "${WSYS}/nvlddmkm.sys" ]; then
+        echo "source ${WSYS}/nvlddmkm.sys not found, will try to extract the installer"
+        NV_WIN_DRV_INSTALLER=""
+        for i in ${VER_TARGET}*[-_]win*[-_]64bit*.exe; do
+            [ -f "$i" ] || continue
+            NV_WIN_DRV_INSTALLER="$i"
+            break
+        done
+        [ -n "$NV_WIN_DRV_INSTALLER" ] || die "nvidia windows driver installer version $VER_TARGET not found"
+        which 7z &>/dev/null || die "install p7zip-full for 7z tool (http://p7zip.sourceforge.net/)"
+        mkdir -p "${WSYS}" || die "failed to create $WSYS"
+        SYS_SRC=()
+        for i in "${WSYS_FILES[@]}"; do
+            SYS_SRC+=("Display.Driver/${i%?}*")
+        done
+        echo "extracting the driver installer, please wait..."
+        7z x -y -o"${WSYS}" "$NV_WIN_DRV_INSTALLER" "${SYS_SRC[@]}" &>/dev/null || die "failed to extract windows driver installer"
+        for i in "${WSYS_FILES[@]}"; do
+            if [ -f "${WSYS}/Display.Driver/${i}" ]; then
+                mv "${WSYS}/Display.Driver/${i}" "${WSYS}/${i}" || die "failed to move $i"
+            else
+                compressed="${WSYS}/Display.Driver/${i%?}_"
+                [ -f "$compressed" ] || die "windows driver file $i not found"
+                which msexpand &>/dev/null || die "install mscompress for msexpand"
+                msexpand < "$compressed" > "${WSYS}/${i}" || die "failed to expand $i"
+            fi
+        done
+        echo "extracted needed stuff from the driver installer"
+    fi
+    for i in "${WSYS_FILES[@]}"; do
+        [ -s "${WSYS}/${i}" ] || die "windows driver file $i missing from $WSYS"
     done
-    popd &>/dev/null
-    rm -rf ${WSYS}/{Display.Driver,GFExperience}
-    echo "extracted needed stuff from the driver installer"
 fi
 
 if $DO_MRGD; then
@@ -595,7 +595,14 @@ PY
 fi
 
 rm -rf ${TARGET}
-$CP ${SOURCE} ${TARGET}
+if $DO_WSYS; then
+    mkdir -p "${TARGET}" || die "failed to create $TARGET"
+    for i in "${WSYS_FILES[@]}"; do
+        $CP "${SOURCE}/${i}" "${TARGET}/${i}" || die "failed to copy $i"
+    done
+else
+    $CP ${SOURCE} ${TARGET}
+fi
 #( cd ${TARGET}; git init .; git add -f .; git commit -m initial; )
 
 if $NVOSS; then
@@ -636,45 +643,39 @@ fi
 
 if $DO_WSYS; then
     which osslsigncode &>/dev/null || die "install osslsigncode (https://github.com/mtrojnar/osslsigncode)"
-    if [ ! -x "$BASEDIR"/nsigpatch ]; then
+    if $DO_LIBS && { [ ! -x "$BASEDIR"/nsigpatch ] || [ "$BASEDIR"/nsigpatch.c -nt "$BASEDIR"/nsigpatch ]; }; then
         which gcc &>/dev/null || die "gcc is needed to compile nsigpatch tool"
         gcc -fshort-wchar "$BASEDIR"/nsigpatch.c -o "$BASEDIR"/nsigpatch || die "build of nsigpatch tool failed"
     fi
     $TESTSIGN && { [ -e wtestsign/wsys-test-cert.pfx ] || die "testsign certificate missing, try with --create-cert option"; }
 
-    rm -f ${SOURCE}/*-unsigned
-    find ${SOURCE} -iname '*.sys' -o -iname '*.dll' | while read i
-    do
-        t=`basename "${i}"`
-        echo "remove signature: ${t}"
-        osslsigncode remove-signature -in ${i} -out ${i}-unsigned &>/dev/null || die "osslsigncode remove-signature failed"
-        $CP ${i}-unsigned ${TARGET}/${t}-unsigned
+    for i in "${WSYS_FILES[@]}"; do
+        echo "remove signature: ${i}"
+        osslsigncode remove-signature -in "${SOURCE}/${i}" -out "${TARGET}/${i}-unsigned" &>/dev/null || die "osslsigncode remove-signature failed for $i"
     done
 
-    if [ -e "$BASEDIR/patches/wsys-${VER_TARGET}.diff" ]; then
-        echo "about to patch ${TARGET}/nvlddmkm.sys-unsigned"
-        if [ -e "$BASEDIR/patches/wsys-${VER_TARGET}-klogtrace.diff" ]; then
-            $KLOGT && { blobpatch ${TARGET}/nvlddmkm.sys-unsigned "$BASEDIR/patches/wsys-${VER_TARGET}-klogtrace.diff" || exit 1; }
-        fi
-        blobpatch ${TARGET}/nvlddmkm.sys-unsigned "$BASEDIR/patches/wsys-${VER_TARGET}.diff" || exit 1
+    echo "about to patch ${TARGET}/nvlddmkm.sys-unsigned"
+    if [ -e "$BASEDIR/patches/wsys-${VER_TARGET}-klogtrace.diff" ]; then
+        $KLOGT && { blobpatch ${TARGET}/nvlddmkm.sys-unsigned "$BASEDIR/patches/wsys-${VER_TARGET}-klogtrace.diff" || exit 1; }
     fi
+    blobpatch ${TARGET}/nvlddmkm.sys-unsigned "$BASEDIR/patches/wsys-${VER_TARGET}.diff" || exit 1
 
-    for i in ${TARGET}/*-unsigned
-    do
-        t=${i%-unsigned}
-        [ "${t%.sys}" = "${t}" ] && {
-            libspatch ${i}
-            "$BASEDIR"/nsigpatch ${i} || exit 1
-        }
-        rm -f ${t}
+    for name in "${WSYS_FILES[@]}"; do
+        i="${TARGET}/${name}-unsigned"
+        t="${TARGET}/${name}"
+        if [ "${name%.dll}" != "$name" ]; then
+            libspatch "$i" || die "failed to patch $name"
+            "$BASEDIR"/nsigpatch "$i" || exit 1
+        fi
+        rm -f "$t" || die "failed to prepare $t"
 
         if $TESTSIGN; then
             echo -n "creating ${t} signed with a test certificate ... "
             osslsigncode sign -pkcs12 wtestsign/wsys-test-cert.pfx -pass P@ss0wrd -n "nvidia-driver-vgpu-unlock" \
-                -t http://timestamp.digicert.com -in ${i} -out ${t}
+                -t http://timestamp.digicert.com -in "$i" -out "$t" || die "failed to sign $name"
         else
             echo "testsigning skipped: ${t}"
-            $CP ${i} ${t}
+            $CP "$i" "$t" || die "failed to copy $name"
         fi
         echo
     done
