@@ -1,27 +1,31 @@
 diff --git a/kernel/nvidia/nv.c b/kernel/nvidia/nv.c
-index face0f5..3709b61 100644
 --- a/kernel/nvidia/nv.c
 +++ b/kernel/nvidia/nv.c
-@@ -785,8 +785,13 @@ static void nv_unregister_chrdev(
+@@ -784,6 +784,9 @@
      unregister_chrdev_region(MKDEV(NV_MAJOR_DEVICE_NUMBER, minor), count);
  }
- 
+
 +extern void vup_hooks_init(void);
 +extern void vup_hooks_exit(void);
 +
  static int __init nvidia_init_module(void)
  {
-+    vup_hooks_init();
-+
      int rc;
-     NvU32 count;
+@@ -792,6 +795,8 @@
      nvidia_stack_t *sp = NULL;
-@@ -945,6 +950,8 @@ procfs_exit:
- 
+     const NvBool is_nvswitch_present = os_is_nvswitch_present();
+     int num_pci_devices = 0, num_platform_devices = 0;
++
++    vup_hooks_init();
+
+     nv_memdbg_init();
+
+@@ -964,6 +969,8 @@
  static void __exit nvidia_exit_module(void)
  {
-+    vup_hooks_exit();
-+
      nvidia_stack_t *sp = __nv_init_sp;
- 
++
++    vup_hooks_exit();
+
      nv_unregister_chrdev(NV_MINOR_DEVICE_NUMBER_CONTROL_DEVICE, 1,
+         &nv_linux_control_device_cdev);

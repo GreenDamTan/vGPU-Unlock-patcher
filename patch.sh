@@ -1,10 +1,10 @@
 #!/bin/bash
 
-BASEDIR=$(dirname $0)
+BASEDIR=$(cd -- "$(dirname -- "$0")" && pwd)
 
-GNRL="NVIDIA-Linux-x86_64-550.90.07"
-VGPU="NVIDIA-Linux-x86_64-550.90.05-vgpu-kvm"
-GRID="NVIDIA-Linux-x86_64-550.90.07-grid"
+GNRL="NVIDIA-Linux-x86_64-580.196.07"
+VGPU="NVIDIA-Linux-x86_64-580.196.09-vgpu-kvm"
+GRID="NVIDIA-Linux-x86_64-580.196.07-grid"
 #WSYS="NVIDIA-Windows-x86_64-474.30"
 #WSYS="NVIDIA-Windows-x86_64-512.15"
 #WSYS="NVIDIA-Windows-x86_64-516.25"
@@ -32,7 +32,8 @@ SETUP_TESTSIGN=false
 REPACK=false
 SWITCH_GRID_TO_GNRL=false
 
-if [ ! -e "${GNRL}.run" -a -e "${GRID}.run" ]; then
+if [ ! -d "${GNRL}" ] && [ ! -e "${GNRL}.run" ] &&
+   [ ! -e "$BASEDIR/../${GNRL}.run" ]; then
     SWITCH_GRID_TO_GNRL=true
 fi
 
@@ -126,7 +127,7 @@ DO_MRGD=false
 DO_WSYS=false
 DO_UNLK=true
 DO_LIBS=true
-SPOOF_DEVID=false
+SPOOF_DEVID=true
 
 STRIP_KERNEL_OPEN=false
 REPACK_ZSTD=false
@@ -166,6 +167,7 @@ do
         --spoof-devid)
             shift
             SPOOF_DEVID=true
+            UnlockRS=false
             ;;
         --repack)
             shift
@@ -200,7 +202,7 @@ do
         --UnlockRS)
             shift
             UnlockRS=true
-            $SPOOF_DEVID && echo "WARNING: UnlockRS only work with out spoof-devid"
+            SPOOF_DEVID=false
             ;;
         *)
             echo "Unknown option $1"
@@ -330,7 +332,13 @@ case "$1" in
 esac
 
 VER_TARGET=`echo ${SOURCE} | awk -F- '{print $4}'`
-VER_BLOB=`echo ${VGPU} | awk -F- '{print $4}'`
+VER_BLOB=$VER_TARGET
+if $DO_VGPU; then
+    VER_BLOB=$VER_VGPU
+fi
+if $DO_MRGD; then
+    VER_TARGET=$VER_GRID
+fi
 
 die() {
     echo "$@"
@@ -338,21 +346,22 @@ die() {
 }
 
 extract() {
-    TDIR="${2}"
-    if [ -z "${TDIR}" ]; then
-        TDIR="${1%.run}"
+    local package="$1"
+    local TDIR="${2:-${1%.run}}"
+    if [ ! -e "$package" ]; then
+        package="$BASEDIR/../${package##*/}"
     fi
-    if [ -e ${1} ]; then
-        $REPACK && sh ${1} --lsm > ${TARGET}.lsm
+    if [ -e "$package" ] && $REPACK; then
+        sh "$package" --lsm > "${TARGET}.lsm" || die "failed to read $package metadata"
     fi
-    if [ -d ${TDIR} ]; then
-        echo "WARNING: skipping extract of ${1} as it seems already extracted in ${TDIR}"
+    if [ -d "$TDIR" ]; then
+        echo "WARNING: skipping extract of $package as it seems already extracted in $TDIR"
         return 0
     fi
-    [ -e ${1} ] || die "package ${1} not found"
-    sh ${1} --extract-only --target ${TDIR}
-    echo >> ${TDIR}/kernel/nvidia/nvidia.Kbuild
-    chmod -R u+w ${TDIR}
+    [ -e "$package" ] || die "package $1 not found"
+    sh "$package" --extract-only --target "$TDIR" || die "failed to extract $package"
+    echo >> "$TDIR/kernel/nvidia/nvidia.Kbuild"
+    chmod -R u+w "$TDIR" || die "failed to prepare $TDIR"
 }
 
 blobpatch_byte() {
@@ -392,9 +401,10 @@ blobpatch() {
 
 applypatch() {
     echo "applypatch ${2} ${3}"
-    patch -d ${1} -p1 --no-backup-if-mismatch -f ${3} < "$BASEDIR/patches/${2}"
+    patch -d ${1} -p1 --fuzz=0 --no-backup-if-mismatch -f ${3} < "$BASEDIR/patches/${2}"
     res=$?
     echo
+    [ "$res" -eq 0 ] || die "ERROR: patch ${2} NOT APPLIED!"
     return $res
 }
 
@@ -402,8 +412,8 @@ applypatchx() {
     applypatch ${1} ${2} ${3}
     res=$?
     #echo "applypatchx ${2} ${3}"
-    if patch -d ${1}/kernel-open -p2 --dry-run ${3} < "$BASEDIR/patches/${2}" &>/dev/null; then
-        patch -d ${1}/kernel-open -p2 --no-backup-if-mismatch ${3} < "$BASEDIR/patches/${2}" &>/dev/null
+    if patch -d ${1}/kernel-open -p2 --fuzz=0 --dry-run ${3} < "$BASEDIR/patches/${2}" &>/dev/null; then
+        patch -d ${1}/kernel-open -p2 --fuzz=0 --no-backup-if-mismatch ${3} < "$BASEDIR/patches/${2}" &>/dev/null
     else
         die "ERROR: patch ${2} NOT APPLIED to kernel-open!"
     fi
@@ -430,7 +440,8 @@ $SETUP_TESTSIGN && {
         -eku 1.3.6.1.5.5.7.3.3 -m 36 -sv wtestsign/test-spc.pvk -p12 wtestsign/wsys-test-cert.pfx P@ss0wrd wtestsign/test-spc.cer &>/dev/null || die "makecert Test SPC failed"
 }
 
-$FRANKENSTEIN && if [ ! -d "${VGPU}" ]; then
+if $FRANKENSTEIN; then
+if [ ! -d "${VGPU}" ]; then
     echo "WARNING: this is highly experimental frankenstein setup for vgpu drivers!"
     VGPUa="NVIDIA-Linux-x86_64-535.54.06-vgpu-kvm"
     VGPUb="NVIDIA-Linux-x86_64-535.86.05"
@@ -472,26 +483,37 @@ else
     echo "WARNING: skipping frankenstein setup as ${VGPU} already exists"
     echo -e "${VGPU}/libvgpucompat.so: $BASEDIR/patches/cvgpu.c\n\tgcc -o \$@ -shared -fPIC -O2 -s -Wall \$<" | make -f - || die "build of libvgpucompat.so failed"
 fi
+fi
 
-$DO_VGPU && extract ${VGPU}.run
+$DO_VGPU && extract "${VGPU}.run" "$VGPU"
 $DO_GRID && {
     if $SWITCH_GRID_TO_GNRL; then
-      if [ -d ${GNRL} ]; then
-        echo "WARNING: skipping switch from grid to general as it seems present in ${GNRL}"
-      else
-        extract ${GRID}.run ${GNRL}
-        applypatch ${GNRL} vgpu-kvm-merge-grid-scripts.patch -R
-        GRID=${GNRL}
-        grep ' MODULE:vgpu$\|kernel/nvidia/nv-vgpu-vmbus' ${GRID}/.manifest | awk -F' ' '{print $1}' | while read i
-        do
-            rm -f ${GRID}/$i
-        done
-        sed -e '/ MODULE:vgpu$/ d' -e '/kernel\/nvidia\/nv-vgpu-vmbus/ d'  -i ${GRID}/.manifest
-        sed -e '/nvidia\/nv-vgpu-vmbus.c/ d' -i ${GRID}/kernel/nvidia/nvidia-sources.Kbuild
-        sed -e '/^[ \t]*GRID_BUILD=1/ d' -i ${GRID}/kernel/conftest.sh
-      fi
+        if [ -d "$GNRL" ]; then
+            echo "WARNING: skipping switch from grid to general as it seems present in $GNRL"
+        else
+            extract "${GRID}.run" "$GNRL"
+            applypatch "$GNRL" grid-to-general-scripts.patch
+            python3 - "$GNRL" <<'PY' || die "failed to remove GRID components"
+import json
+import sys
+from pathlib import Path
+
+target = Path(sys.argv[1])
+manifest = target / ".manifest"
+lines = manifest.read_text().splitlines(keepends=True)
+removed = {line.split()[0] for line in lines[8:] if line.rstrip().endswith(" MODULE:vgpu")}
+for name in removed:
+    (target / name).unlink(missing_ok=True)
+manifest.write_text("".join(line for line in lines if not line.rstrip().endswith(" MODULE:vgpu")))
+path = target / "sandboxutils-filelist.json"
+entries = json.loads(path.read_text())
+path.write_text(json.dumps([entry for entry in entries if entry["name"] not in removed], indent=3) + "\n")
+PY
+            sed -e '/^[ \t]*GRID_BUILD=1/ d' -i "$GNRL"/kernel{,-open}/conftest.sh
+        fi
+        GRID=$GNRL
     else
-        extract ${GRID}.run
+        extract "${GRID}.run" "$GRID"
     fi
 }
 
@@ -536,34 +558,40 @@ if $DO_WSYS && [ ! -e "${WSYS}/nvlddmkm.sys" ]; then
 fi
 
 if $DO_MRGD; then
-    echo "about to create merged driver"
-    rm -rf ${SOURCE}
-    mkdir ${SOURCE}
-    $CP ${VGPU}/. ${SOURCE}
-    rm ${SOURCE}/libnvidia-ml.so.${VER_VGPU}
-    $CP ${GRID}/. ${SOURCE}
-    if [ ${VER_BLOB} = ${VER_TARGET} ]; then
-        rm -rf ${SOURCE}/firmware
-        $CP -f ${VGPU}/firmware ${SOURCE}
-    fi
-    for i in LICENSE kernel{,-open}/nvidia/nvidia-sources.Kbuild init-scripts/{post-install,pre-uninstall} nvidia-bug-report.sh kernel/nvidia/nv-kernel.o_binary
+    echo "about to create merged driver (userspace=$VER_TARGET RM=$VER_BLOB)"
+    rm -rf "${SOURCE}"
+    mkdir "${SOURCE}" || die "failed to create $SOURCE"
+    $CP "${VGPU}/." "${SOURCE}" || die "failed to copy $VGPU"
+    rm "${SOURCE}/libnvidia-ml.so.${VER_VGPU}" || die "failed to remove host NVML"
+    $CP "${GRID}/." "${SOURCE}" || die "failed to copy $GRID"
+    $CP -f "${VGPU}/firmware/." "${SOURCE}/firmware" || die "failed to copy RM firmware"
+    for i in LICENSE kernel{,-open}/nvidia/{nvidia-sources.Kbuild,nv-kernel.o_binary} init-scripts/{post-install,pre-uninstall,common.sh} nvidia-bug-report.sh
     do
-        $CP -f ${VGPU}/$i ${SOURCE}/$i
+        $CP -f "${VGPU}/$i" "${SOURCE}/$i" || die "failed to copy host $i"
     done
-    sed -e '/^# VGX_KVM_BUILD/aVGX_KVM_BUILD=1' -i ${SOURCE}/kernel{,-open}/conftest.sh
-    sed -e '/VERSION/ s/\\"[.0-9]\+\\"/\\"'${VER_TARGET}'\\"/' -i ${SOURCE}/kernel/Kbuild
-    sed -e '/VERSION/ s/\\"[.0-9]\+\\"/\\"'${VER_TARGET}'\\"/' -i ${SOURCE}/kernel-open/Kbuild
-    sed -e 's/^\(nvidia .*nvidia-drm.*\)/\1 nvidia-vgpu-vfio/' -i ${SOURCE}/.manifest
-    diff -u ${VGPU}/.manifest ${GRID}/.manifest \
-    | grep -B 1 '^-.* MODULE:\(vgpu\|installer\)$' | grep -v '^--$' \
-    | sed -e '/^ / s:/:\\/:g' -e 's:^ \(.*\):/\1/ a \\:' -e 's:^-\(.*\):\1\\:' | head -c -2 \
-    | sed -e ':append' -e '/\\\n\// b found' -e N -e 'b append' -e ':found' -e 's:\\\n/:\n/:' \
-    > manifest-merge.sed
-    echo "merging .manifest file"
-    sed -f manifest-merge.sed -i ${SOURCE}/.manifest
-    rm manifest-merge.sed
-    [ -e ${SOURCE}/nvidia-gridd ] && applypatch ${SOURCE} vgpu-kvm-merge-grid-scripts.patch
-    applypatchx ${SOURCE} disable-nvidia-blob-version-check.patch
+    sed -e '/^[ \t]*GRID_BUILD=1/d' -e '/^# VGX_KVM_BUILD/aVGX_KVM_BUILD=1' -i "${SOURCE}"/kernel{,-open}/conftest.sh
+    awk -v host_nvml="libnvidia-ml.so.${VER_VGPU}" '
+         FNR == NR { if (FNR > 8) seen[$1] = 1; next }
+         FNR > 8 && $1 != host_nvml && !seen[$1]++ { print }' \
+        "${GRID}/.manifest" "${VGPU}/.manifest" >> "${SOURCE}/.manifest"
+    sed -e '4 s/$/ nvidia-vgpu-vfio/' -i "${SOURCE}/.manifest"
+    python3 - "$VGPU" "$SOURCE" <<'PY' || die "failed to merge sandbox file list"
+import json
+import sys
+from pathlib import Path
+
+host, target = map(Path, sys.argv[1:])
+path = target / "sandboxutils-filelist.json"
+entries = json.loads(path.read_text())
+names = {entry["name"] for entry in entries}
+for entry in json.loads((host / path.name).read_text()):
+    if entry["name"] not in names and (target / entry["name"]).exists():
+        entries.append(entry)
+        names.add(entry["name"])
+path.write_text(json.dumps(entries, indent=3) + "\n")
+PY
+    [ -e "${SOURCE}/nvidia-gridd" ] && applypatch "${SOURCE}" vgpu-kvm-merge-grid-scripts.patch
+    applypatchx "${SOURCE}" disable-nvidia-blob-version-check.patch
 fi
 
 rm -rf ${TARGET}
@@ -656,7 +684,6 @@ fi
 
 if $DO_GNRL; then
     VER_BLOB=${VER_TARGET}
-    grep -q '^GRID_BUILD=1' ${TARGET}/kernel/conftest.sh || sed -e '/^# GRID_BUILD /aGRID_BUILD=1' -i ${TARGET}/kernel/conftest.sh
 fi
 
 if $DO_UNLK; then
@@ -680,11 +707,11 @@ echo 'OBJECT_FILES_NON_STANDARD_nv_hooks.o := y' >> ${TARGET}/kernel/nvidia/nvid
 sed -i ${TARGET}/.manifest -e '/^kernel\/nvidia\/i2c_nvswitch.c / a \
 kernel/unlock/nv_hooks.c 0644 KERNEL_MODULE_SRC INHERIT_PATH_DEPTH:1 MODULE:vgpu'
 echo
-if [ -e patches/blob-${VER_BLOB}.diff ]; then
-    blobpatch ${TARGET}/kernel/nvidia/nv-kernel.o_binary patches/blob-${VER_BLOB}.diff || exit 1
+if $DO_VGPU || [ -e "$BASEDIR/patches/blob-${VER_BLOB}.diff" ]; then
+    blobpatch ${TARGET}/kernel/nvidia/nv-kernel.o_binary "$BASEDIR/patches/blob-${VER_BLOB}.diff" || exit 1
 fi
-if [ -e patches/vgpud-${VER_BLOB}.diff ]; then
-    blobpatch ${TARGET}/nvidia-vgpud patches/vgpud-${VER_BLOB}.diff || exit 1
+if $DO_VGPU || [ -e "$BASEDIR/patches/vgpud-${VER_BLOB}.diff" ]; then
+    blobpatch ${TARGET}/nvidia-vgpud "$BASEDIR/patches/vgpud-${VER_BLOB}.diff" || exit 1
 fi
 applypatch ${TARGET} setup-vup-hooks.patch
 applypatchx ${TARGET} filter-for-nvrm-logs.patch
@@ -720,21 +747,18 @@ if $DO_VGPU; then
             echo "libvgpucompat.so 0755 VGX_LIB NATIVE MODULE:vgpu" >> ${TARGET}/.manifest
             for s in nvidia-vgpu-mgr nvidia-vgpud
             do
-                patchelf --add-needed libvgpucompat.so ${TARGET}/${s}
+                patchelf --add-needed libvgpucompat.so ${TARGET}/${s} || die "failed to inject libvgpucompat.so into ${s}"
             done
         }
-        sed -e 's/\(enable_spoof_devid\)=./\1=1/' -i ${TARGET}/libvgpucompat.so
+    elif $UnlockRS; then
+        which patchelf &>/dev/null || die "patchelf not found"
+        cp ${BASEDIR}/tools/libvgpu_unlock_rs.so ${TARGET}/libvgpu_unlock_rs.so || die "failed to copy libvgpu_unlock_rs.so"
+        echo "libvgpu_unlock_rs.so 0755 VGX_LIB NATIVE MODULE:vgpu" >> ${TARGET}/.manifest
+        for s in nvidia-vgpu-mgr nvidia-vgpud
+        do
+            patchelf --add-needed libvgpu_unlock_rs.so ${TARGET}/${s} || die "failed to inject libvgpu_unlock_rs.so into ${s}"
+        done
     fi
-    $SPOOF_DEVID || $UnlockRS  && {
-      cp ${BASEDIR}/tools/libvgpu_unlock_rs.so ${TARGET}/libvgpu_unlock_rs.so
-      echo "libvgpu_unlock_rs.so 0755 VGX_LIB NATIVE MODULE:vgpu" >> ${TARGET}/.manifest
-      which patchelf &>/dev/null || die "patchelf not found"
-      for s in nvidia-vgpu-mgr nvidia-vgpud
-      do
-          patchelf --add-needed libvgpu_unlock_rs.so ${TARGET}/${s}
-      done
-    }
-    applypatchx ${TARGET} vgpu-kvm-nvidia-535.54-compat.patch
     applypatchx ${TARGET} workaround-for-cards-with-inforom-error.patch
     applypatch ${TARGET} vcfg-v16mpp.patch
     applypatch ${TARGET} vcfg-v15vcs.patch

@@ -12,22 +12,20 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <asm/ioctl.h>
+#include <sys/ioctl.h>
+#include <stdarg.h>
 
 #define REQ_QUERY_GPU 0xC020462A
 
-#define OP_READ_DEV_TYPE 0x800289 // *result type is uint64_t.
-#define OP_READ_PCI_ID 0x20801801 // *result type is uint16_t[4], the second
-// element (index 1) is the device ID, the
-// forth element (index 3) is the subsystem
-// ID.
+#define OP_READ_DEV_TYPE 0x800289 // 580 返回 32 位 virtualizationMode 和 1 字节 isGridBuild，总长 8 字节。
+#define OP_READ_PCI_ID 0x20801801 // 16 字节结果中 device ID 位于 +2，subsystem ID 位于 +6。
 
 #define DEV_TYPE_VGPU_CAPABLE 3
 
 #define STATUS_OK 0
 #define STATUS_TRY_AGAIN 3
 
-typedef int( * ioctl_t)(int fd, int request, void * data);
+typedef int (*ioctl_t)(int fd, unsigned long request, ...);
 
 typedef struct iodata_t {
   uint32_t unknown_1; // Initialized prior to call.
@@ -37,11 +35,24 @@ typedef struct iodata_t {
   void * result; // Pointer initialized prior to call.
   // Pointee initialized to 0 prior to call.
   // Pointee is written by ioctl call.
-  uint32_t op_size; // Set to 0x10 for READ_PCI_ID and set to 4 for
-  // READ_DEV_TYPE prior to call.
+  uint32_t op_size; // 580 中 READ_PCI_ID 为 0x10，READ_DEV_TYPE 为 8。
   uint32_t status; // Written by ioctl call. See comment below.
 }
 iodata_t;
+
+_Static_assert(sizeof(iodata_t) == 0x20, "RM_CONTROL header size");
+_Static_assert(offsetof(iodata_t, op_type) == 0x08, "RM_CONTROL command offset");
+_Static_assert(offsetof(iodata_t, result) == 0x10, "RM_CONTROL result offset");
+_Static_assert(offsetof(iodata_t, op_size) == 0x18, "RM_CONTROL size offset");
+_Static_assert(offsetof(iodata_t, status) == 0x1c, "RM_CONTROL status offset");
+
+typedef struct {
+    uint32_t virtualization_mode;
+    uint8_t is_grid_build;
+} gpu_virtualization_mode_t;
+
+_Static_assert(sizeof(gpu_virtualization_mode_t) == 8, "virtualization mode parameter size");
+_Static_assert(offsetof(gpu_virtualization_mode_t, is_grid_build) == 4, "isGridBuild offset");
 
 #define BUILD_BUG_ON(condition) ((void)sizeof(char[1 - 2*!!(condition)]))
 
@@ -202,7 +213,7 @@ typedef struct
 
 //#define DO_FIXUPS
 static int dbg_trace_level = 0;
-static volatile char spoof_devid_opt[] = "enable_spoof_devid=0";
+static volatile char spoof_devid_opt[] = "enable_spoof_devid=1";
 
 static uint32_t ioctl_fixups[][3] = {
 #ifdef DO_FIXUPS
@@ -220,7 +231,7 @@ static uint32_t ioctl_fixups[][3] = {
 
 static const char BPATH[] = "/tmp/vgpu-traces";
 
-static void dbgdump(uint32_t *pstatus, int request, uint32_t op_type, uint8_t *buff, uint32_t size, const char *tag)
+static void dbgdump(uint32_t *pstatus, unsigned long request, uint32_t op_type, uint8_t *buff, uint32_t size, const char *tag)
 {
     static int idx = -1;
     int fd;
@@ -254,8 +265,13 @@ static void dbgdump(uint32_t *pstatus, int request, uint32_t op_type, uint8_t *b
         idx++;
 }
 
-int ioctl(int fd, int request, void *data)
+int ioctl(int fd, unsigned long request, ...)
 {
+  va_list args;
+  va_start(args, request);
+  void *data = va_arg(args, void *);
+  va_end(args);
+
   static ioctl_t real_ioctl = 0;
   static int spoof_devid_enabled = -1;
   static unsigned spoof_devid_override = 0;
@@ -378,7 +394,7 @@ int ioctl(int fd, int request, void *data)
   }
 #endif
 
-  if ((uint32_t)request == REQ_QUERY_GPU) {
+  if (request == REQ_QUERY_GPU && data != NULL) {
     iodata = (iodata_t *)data;
 
     if (dbg_trace_level >= 3)
@@ -430,7 +446,7 @@ int ioctl(int fd, int request, void *data)
   ret = real_ioctl(fd, request, data);
 
   // Not a call we care about.
-  if ((uint32_t) request != REQ_QUERY_GPU) return ret;
+  if (request != REQ_QUERY_GPU || data == NULL || ret < 0) return ret;
   iodata = (iodata_t *)data;
 
   if (dbg_trace_level >= 3 || (iodata->status != 0 && dbg_trace_level >= 2))
@@ -491,13 +507,12 @@ int ioctl(int fd, int request, void *data)
   if (dbg_trace_level >= 4)
     dbgdump(&iodata->status, request, iodata->op_type, iodata->result, iodata->op_size, NULL);
 
-  // Call failed
-  if (ret < 0) return ret;
-
   //Driver will try again
   if (iodata -> status == STATUS_TRY_AGAIN) return ret;
 
-  if (spoof_devid_enabled > 0 && iodata->op_type == OP_READ_PCI_ID) {
+  if (spoof_devid_enabled > 0 && iodata->status == STATUS_OK &&
+      iodata->result != NULL && iodata->op_size == 0x10 &&
+      iodata->op_type == OP_READ_PCI_ID) {
     // Lookup address of the device and subsystem IDs.
     uint16_t * devid_ptr = (uint16_t * ) iodata -> result + 1;
     uint16_t * subsysid_ptr = (uint16_t * ) iodata -> result + 3;
@@ -533,17 +548,20 @@ int ioctl(int fd, int request, void *data)
             spoofed_subsysid = 0x165a;
       }
     // GV100 Volta
-    if (0x1D80 <= actual_devid && actual_devid <= 0x1DBF) { //ARCH_VOLTA
+    if ((0x1D80 <= actual_devid && actual_devid <= 0x1DBF) ||
+        actual_devid == 0x1DF4) {
         spoofed_devid = 0x1db6; // Tesla V100 32GB PCIE
     }
     // Turing
-    if ((0x1e02 <= actual_devid && actual_devid <= 0x1ff9) ||
-        (0x2182 <= actual_devid && actual_devid <= 0x21d1)) {
+    if (actual_devid != 0x1eb8 && // T4 保留原生 vGPU 标识。
+        ((0x1e02 <= actual_devid && actual_devid <= 0x1ff9) ||
+         (0x2182 <= actual_devid && actual_devid <= 0x21d1))) {
             spoofed_devid = 0x1e30; // Quadro RTX 6000
             spoofed_subsysid = 0x12ba;
     }
     // Ampere
     if ((0x2080 <= actual_devid && actual_devid <= 0x20BF) || //GPU_IMPL_GA100
+        actual_devid == 0x20C2 ||
         (0x2200 <= actual_devid && actual_devid <= 0x2600)) {
             spoofed_devid = 0x2230; // RTX A6000
     }
@@ -562,10 +580,12 @@ int ioctl(int fd, int request, void *data)
     * subsysid_ptr = spoofed_subsysid;
   }
 
-  if (spoof_devid_enabled > 0 && iodata -> op_type == OP_READ_DEV_TYPE) {
+  if (spoof_devid_enabled > 0 && iodata->status == STATUS_OK &&
+      iodata->result != NULL && iodata->op_size == sizeof(gpu_virtualization_mode_t) &&
+      iodata->op_type == OP_READ_DEV_TYPE) {
     // Set device type to vGPU capable.
-    uint64_t * dev_type_ptr = (uint64_t * ) iodata -> result;
-    * dev_type_ptr = DEV_TYPE_VGPU_CAPABLE;
+    gpu_virtualization_mode_t *params = iodata->result;
+    params->virtualization_mode = DEV_TYPE_VGPU_CAPABLE;
   }
 
   if(iodata->status != STATUS_OK) {

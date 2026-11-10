@@ -1,8 +1,7 @@
 diff --git a/vgpuConfig.xml b/vgpuConfig.xml
-index 0761c27..2cc834d 100644
 --- a/vgpuConfig.xml
 +++ b/vgpuConfig.xml
-@@ -4594,6 +4594,158 @@
+@@ -4592,6 +4592,158 @@
      <license>QVDWS;VWS;VWSExt</license>
      <nvlinkP2PSupported>1</nvlinkP2PSupported>
    </vgpuType>
@@ -161,9 +160,9 @@ index 0761c27..2cc834d 100644
    <vgpuType id="435" name="GRID RTX6000-1B" class="NVS">
      <devId vendorId="0x10de" deviceId="0x1E30" subsystemVendorId="0x10de" subsystemId="0x1437"/>
      <profileSize>0x40000000</profileSize>
-@@ -10683,6 +10827,38 @@
+@@ -19790,6 +19942,38 @@
        <maxVgpus>1</maxVgpus>
-       <digest type="signature">47f5422aa8dea67fc278c8beacbe545497bf0ed740dfb92638a9d8feeed8c7bf20cf93de6d4fb031b863db140681aff395cf3ef2317af430bdd2ff3cfca3577831a0303281e0960fa2adbd756bd2600a7257dbeafc1bc103924bb31cc94a23fcb76fa16e282050945f9c5a51bfa6e06e4a1bbe3fb87cb2ce1f9d225235e183ed</digest>
+       <digest type="signature">88cc03b34f23d0bf17b2d34f7a2b0f5b5e37e0f05bcf5faaf24cf5f731bbf36351702b98851fb05bf53715a96fa04f4cca123f35655e350b7caa6cb970c9178d78e8368f3ebd62ad69fbde98ad714d258123a68d7ae9ac2324202689b1476310509e3f568d0c95eb12b5505c0c07d1a11995265b53fc1dbfbf1e413bcd588204</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="331">
 +      <maxVgpus>8</maxVgpus>
@@ -199,4 +198,4 @@ index 0761c27..2cc834d 100644
 +    </supportedVgpu>
      <supportedVgpu vgpuId="435">
        <maxVgpus>24</maxVgpus>
-       <digest type="signature">7a529ed5ff3803eae54d19d42adc8c9c5f9e3a28ce11931a31de4fff45373fce0162496d6f24064fa0a849439d7b26928c0a5f9f561686e3a66fbc6c20955b0687192f6c264548458139d75927f5aaad0b62f27319ae29df89b047d58b6fb327f15cc67cc782bd374157b4f905819e5c0e13e2a7a155de8e8ec98691f4b1c4f2</digest>
+       <digest type="signature">a5cfc567a91f0d808132b6a10429f9c2ee22b9604bbcc8e2c641f6423d26e0268d1a14d2e274699deb4b8398f1075ce27f4154ebffd7dc1b16f9d10725aedb5e48f9144c60d434011683b67cd5c528dfe0ce4ee392d16940012df450ae9c43d65a088b381992f3689891a2855df3ac7243e4f748c719fe2f45c439c563d42a65</digest>

@@ -1,45 +1,76 @@
 diff --git a/init-scripts/post-install b/init-scripts/post-install
-index 719a43e..5cd3575 100644
 --- a/init-scripts/post-install
 +++ b/init-scripts/post-install
-@@ -95,6 +95,14 @@ run_install() {
-     printf "\n$nv_daemon_name $target successfully installed.\n"
- }
- 
+@@ -83,6 +83,15 @@
+
+     . $current_path/common.sh
+
++    if [ "$install_target" = "systemd" ]; then
++        case "$(systemctl is-enabled "$nv_daemon_name.service" 2>/dev/null)" in
++            masked|masked-runtime)
++                printf "\n$nv_daemon_name.service is masked, preserving administrator setting.\n"
++                return 0
++                ;;
++        esac
++    fi
++
+     # Run through the install steps now
+     nv_printf "\n"
+     nv_printf "Installation parameters:\n"
+@@ -118,6 +127,28 @@
+     run_install nvidia-vgpu-mgr 0 $tgt 1
+ fi
+
 +IS_GRID=$(( 1 ))
 +if [ "$IS_GRID" = "1" ]; then
-+    run_install nvidia-gridd 1 $tgt
-+    if [ `uname -m` = "x86_64" ]; then
-+        mkdir -p /var/run/nvidia-topologyd
-+        run_install nvidia-topologyd 1 $tgt
++    start_service=0
++    enable_service=1
++    grid_status=0
++    if nvidia-smi >/dev/null 2>&1; then
++        start_service=1
++    else
++        nv_printf "\nFew of the NVIIDA services will not be started."
++        nv_printf " It is strongly recommended that you reboot"
++        nv_printf " your computer after the installation is complete.\n"
 +    fi
++
++    (run_install nvidia-persistenced $start_service $tgt $enable_service) || grid_status=1
++    (run_install nvidia-gridd $start_service $tgt $enable_service) || grid_status=1
++    if [ `uname -m` = "x86_64" ]; then
++        mkdir -p /var/run/nvidia-topologyd || grid_status=1
++        (run_install nvidia-topologyd $start_service $tgt $enable_service) || grid_status=1
++    fi
++    [ "$grid_status" -eq 0 ] || exit "$grid_status"
 +fi
- 
- IS_VGX=$(( 1 || 1 ))
- if [ "$IS_VGX" = "1" ]; then
++
+ #VGPU.RUN_SPECIFIC_CODE_START
+ #VGPU.RUN_SPECIFIC_CODE_END
+
 diff --git a/init-scripts/pre-uninstall b/init-scripts/pre-uninstall
-index 43b8f3c..d870b6c 100644
 --- a/init-scripts/pre-uninstall
 +++ b/init-scripts/pre-uninstall
-@@ -93,6 +93,10 @@ run_uninstall() {
+@@ -101,6 +101,14 @@
      printf "\n$nv_daemon_name $target successfully uninstalled.\n"
  }
- 
+
 +IS_GRID=$(( 1 ))
 +if [ "$IS_GRID" = "1" ]; then
++    if [ `uname -m` = "x86_64" ]; then
++        run_uninstall nvidia-topologyd $tgt
++    fi
 +    run_uninstall nvidia-gridd $tgt
++    run_uninstall nvidia-persistenced $tgt
 +fi
- 
- IS_VGX=$(( 1 || 1 ))
+
+ IS_VGX=$(( 1 || 1 || VGX_DEVICE_VM_BUILD ))
  if [ "$IS_VGX" = "1" ]; then
 diff --git a/nvidia-bug-report.sh b/nvidia-bug-report.sh
-index 4ada681..b729daa 100755
 --- a/nvidia-bug-report.sh
 +++ b/nvidia-bug-report.sh
-@@ -503,6 +503,15 @@ append_silent "/etc/sun-release"
- append_silent "/etc/release"
- append_silent "/etc/gentoo-release"
- 
+@@ -1305,6 +1305,15 @@
+     fi
+ fi
+
 +append_silent "/etc/nvidia/gridd.conf"
 +
 +if [ -f "/etc/nvidia/nvidia-topologyd.conf" ]; then
@@ -49,13 +80,13 @@ index 4ada681..b729daa 100755
 +else
 +    append_silent "/var/run/nvidia-topologyd/virtualTopology.xml"
 +fi
- 
+
  append "/var/log/nvidia-installer.log"
  append_silent "/var/log/nvidia-uninstall.log"
-@@ -947,6 +956,29 @@ fi
+@@ -1850,6 +1859,29 @@
      echo ""
  ) | $GZIP_CMD >> $LOG_FILENAME
- 
+
 +# get any relevant licensing messages
 +
 +(
@@ -79,6 +110,6 @@ index 4ada681..b729daa 100755
 +    search_string_in_logs /var/log/syslog nvidia-topologyd:
 +
 +) | $GZIP_CMD >> $LOG_FILENAME
- 
+
  # If extra data collection is enabled, dump all active CPU backtraces to be
  # picked up in dmesg

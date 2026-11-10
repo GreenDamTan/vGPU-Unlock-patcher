@@ -1,8 +1,7 @@
 diff --git a/vgpuConfig.xml b/vgpuConfig.xml
-index 0761c27..4b5507c 100644
 --- a/vgpuConfig.xml
 +++ b/vgpuConfig.xml
-@@ -4784,6 +4784,4814 @@
+@@ -4782,6 +4782,4814 @@
      <frame_rate_limiter>1</frame_rate_limiter>
      <license>VApps</license>
    </vgpuType>
@@ -4817,7 +4816,7 @@ index 0761c27..4b5507c 100644
    <vgpuType id="402" name="GRID RTX8000P-1B" class="NVS">
      <devId vendorId="0x10de" deviceId="0x1E78" subsystemVendorId="0x10de" subsystemId="0x1412"/>
      <profileSize>0x40000000</profileSize>
-@@ -9876,6 +14684,18 @@
+@@ -13967,6 +18775,18 @@
        <maxVgpus>12</maxVgpus>
        <digest type="signature">7e0c4388697273a411944f0c44a6f11be21d2ab8430e30602a4c4d8d0cae384d94dd59b01b84a88d80ae874bf4554f5fb14159bdd21ab75423318d96e9e1869c5a82279b6980f9fcaf916fd3896b1ecca2e6df9a09b3003cda21426710ef089c03b5ee07c46c3be09eb7bb239bca0633f36abea1bf7e2afb7108f20b460cfddf</digest>
      </supportedVgpu>
@@ -4836,7 +4835,7 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="0">
      <devId vendorId="0x10de" deviceId="0x15F8" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -9935,6 +14755,18 @@
+@@ -14026,6 +18846,18 @@
        <maxVgpus>16</maxVgpus>
        <digest type="signature">a6db32dcdd713aec198609270bb03107ca077753fd8d60d3c6d893e35cb3f03bbdcead66bd99dfc56c8744c99900e22ead504634420f293b7cb2072c865adc5675ea84b8480d918ef935847a9c749a3a6c5a370ab31afa288349e17152580b5bb49769a478d340d1abe5bb32f30771346299b7c0fe5789638292a55ae1e97a35</digest>
      </supportedVgpu>
@@ -4855,7 +4854,7 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="0">
      <devId vendorId="0x10de" deviceId="0x15F9" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -9994,6 +14826,18 @@
+@@ -14085,6 +18917,18 @@
        <maxVgpus>16</maxVgpus>
        <digest type="signature">57bca05ebad9e0579ecdc1caa4dd6077d4c1ad21acb7e25e9da9c5df8c344fb80e3965587466fb6a177588bf1a8c2cbef8a0baa3f75965a151c55b01e40ea6e209fe3f9c17e2db432b7bda67ad574c332e3bcaf8bc9f8f3de8871a5bafe1bb67939be75b124835be7bf0d7d57f6bd6afe6d8937fc2bd7d99ba69a577903be602</digest>
      </supportedVgpu>
@@ -4874,7 +4873,7 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="0">
      <devId vendorId="0x10de" deviceId="0x1B38" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -10077,6 +14921,26 @@
+@@ -14168,6 +19012,26 @@
        <maxVgpus>24</maxVgpus>
        <digest type="signature">274edd0f7957cd6de7af0dbb323a987aa4e5504296e9cf8584b6780df6e9c80e48f56e61891b8aed525a733c90e71bce56e9a5fafd2f7e7a2c489712b4f15d4d98710f343393f89e388d094cedfd5827344f5c5ed75d6974d4d952c7ff5014e5803f18fcf6a292d6b327b685cf01af77828358aad779b096f30fbfcc44fcdbdc</digest>
      </supportedVgpu>
@@ -4901,7 +4900,7 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="0">
      <devId vendorId="0x10de" deviceId="0x1BB3" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -10128,6 +14992,14 @@
+@@ -14219,6 +19083,14 @@
        <maxVgpus>8</maxVgpus>
        <digest type="signature">715724d4a7467b2fbc386c30c7765df94036f242caf9ef5594622abed6fb8eb095aa6cb0c98ede59f62d3ff9587bbf5cffc1bc2a8d8cdedc6e547428613012d64f192c25fa961e400c7d51f20b8be070bbc1aa97fc75d052b5262443836b3520c23fef0e5c5c2678057c8d86e7a2d0931eb98b474d93ea739862ce3aec6c792e</digest>
      </supportedVgpu>
@@ -4916,7 +4915,7 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="0">
      <devId vendorId="0x10de" deviceId="0x1BB4" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -10187,6 +15059,18 @@
+@@ -14278,6 +19150,18 @@
        <maxVgpus>16</maxVgpus>
        <digest type="signature">065740fc81f7bd360999c6ace458c58a98c151f527220cd90292fbce167c807b0d5956c2a0b83be844964ea56d0f1345bc8721495643f41d2a277a53cbc59863143127653d2ad133665e2fec4a05da68edb56ea80658d331a9765a1889dfd94c7fa9362f2e0f413f7eda37dfb657221315d2ebfdc8a1bf2e68c1dec86bdbbd07</digest>
      </supportedVgpu>
@@ -4935,9 +4934,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1">
      <devId vendorId="0x10de" deviceId="0x1DB1" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -10246,6 +15130,18 @@
+@@ -14337,6 +19221,18 @@
        <maxVgpus>16</maxVgpus>
-       <digest type="signature">1a51fc8c5d1f2fff8c7e198b26ddd1ecd17c74dd9ec39d7129431e4aaaaccf2ecdf4bf6dcf5d121b6968a3001fa6e0b9d716f863f8c71dc9753b73a8dd1c0a47cb763d78ddb7398d561d92c8d2ea65a9ef41c2324975a6ca81cbe59e57213c5731a1b4c97ad7dfbc060891506b3555b64c6b6f703e6f1407d7228defeee3ac7f</digest>
+       <digest type="signature">2291013249e108bcb77de7f732cab56240666577ce2fe73b0607a459e1d368a81005417e229307c93a4b88dbbe7f0b30a536e995026d4ea81681558bc2ba7a6e5261b34c61c4364a3193c403d7979c4f16a9186bb23a270532fa085a6b8a38d773af4b28c341d1d6574751ec68d0f3b27189b3de3ec730e468d0c3af515e2f58</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="304">
 +      <maxVgpus>1</maxVgpus>
@@ -4954,9 +4953,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1">
      <devId vendorId="0x10de" deviceId="0x1DB3" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -10305,6 +15201,18 @@
+@@ -14396,6 +19292,18 @@
        <maxVgpus>16</maxVgpus>
-       <digest type="signature">7408f1bd28582b257e8ade40a960193c0b87c1abea9dcba3334dcba02cf65885bfc631391b4e16ab83e4d151c71734210c191b2630dd71b4cb9c1a9204716472be192c7fe0b5f9d1a9b234501af6fc6dfb1d1a109b3863cb79b8d91cf9d727b82ca32183094e9543378dd5ad59909652dce9ac56af5777607d7fd973503e9146</digest>
+       <digest type="signature">1a622d403bd371d9f5c9a45695cc2d8f0069b57e50b1f18fde80d9c40fc71789c85eff139fc85295f365614cc81aa2811a3207e1595b4f7a00af99566d0076ec4d56310ceb31eb926387d723ecd05df9ec06571bd4c5aa8988e5dd714ddd5f8abd90b66d271bd3dcb469ac19b4f6f8bc5a4aa9756ff0cdb13f0828ca9027e75b</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="310">
 +      <maxVgpus>1</maxVgpus>
@@ -4973,9 +4972,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1">
      <devId vendorId="0x10de" deviceId="0x1DB4" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -10364,6 +15272,18 @@
+@@ -14455,6 +19363,18 @@
        <maxVgpus>16</maxVgpus>
-       <digest type="signature">3bd4917b90871b53208156d41c586393129ba9a171eb4dee87583c7d46c2e57fc7c59a08463cd185531536f4d0cfd9f7a8b8d31d1417121585514f74ce07c0de649ddef7718171e54d67ec9fe05b072df251af871fdc90f75a9284eeb2b0174fb89b50c7a6d2f75402c565c34698c6fd8cd7e53bac32311c767443847bb3abc7</digest>
+       <digest type="signature">4abe2525c526ede244372a326f1b6d3ed8bbd19893450a4e37897b0ec0a0dabc775d65731ef4d9f53a268314868cb3771dbdca86fc84c84dea12c4d4330b18e5ead3584a0dd581e920ccac35a6837669f69edfd20f51cc5956b21bfc9ffab8d9f237f08cc5bef26a0a7dd624fe266c7abe576a5ac80bd6cdd575af4fa6dfdb73</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="301">
 +      <maxVgpus>1</maxVgpus>
@@ -4992,9 +4991,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1">
      <devId vendorId="0x10de" deviceId="0x1DB5" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -10431,6 +15351,22 @@
+@@ -14522,6 +19442,22 @@
        <maxVgpus>32</maxVgpus>
-       <digest type="signature">8e92e6254eb9a7e37f9807462a4941814d6162ba3d8036ac7e050e77deccd628fed87b4e975c90e654d3a42890fef21cc6fc86e601efed1342ebb73612d646d3facc386303d3fe18286852f816ff5c195d135536a8e6c1ae83dc9e96955c7bc9de87ded3c4a80201ea8f663ac434e2d01ef87547fb539446f516a5fd0d9a3fdc</digest>
+       <digest type="signature">4bebae877cdd65b5d2f5a3f7c39a751dfbe6682ba7704690ad2df2d6645806cc9937071fb9bb59849842f807e386bc75f76e5cee34a6f412ed7c218f3426fc8e3f572297b5abe790bcfb52fcbd340d05b7979fd3abdedb3856e4c15277988a26b352016c0b2307f95996634bcde82fa7fbd986ebafd442eb79314c5aca0cbc78</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="318">
 +      <maxVgpus>1</maxVgpus>
@@ -5015,9 +5014,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1">
      <devId vendorId="0x10de" deviceId="0x1DB6" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -10498,6 +15434,22 @@
+@@ -14589,6 +19525,22 @@
        <maxVgpus>32</maxVgpus>
-       <digest type="signature">70a348168c12e49594a693c2cfa0d954c79dbbc5ebb954a4031d26d36f0742973078f84dff3dce9e5dbfeefd129c422883f98fb9d87102785633142860c0140fe8870f0408d687bebf67ebbb8fa923fa584860696eb1c593942da4839a1d06971f568d02ef38198f7d0c4f63a477f19d1cffc223efc0fb92d26b27d276846473</digest>
+       <digest type="signature">87b0a554a0349ceba5f0a0063ce238f66ff4c3bdc0058d17422723bac5a47a33fcd2967d231f4473b19c2c5e7b477e1b9d53678a33e44502562cb36ba9864538688a3dd61aa6df5ecc6c1d73df794730437a43c3ccdbf4e81086a85f9d32ee9c9e988e2d2212535adcac0fd06bb78a465c7ed0f8d1bd18c45361c9bef007ea2d</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="314">
 +      <maxVgpus>1</maxVgpus>
@@ -5038,9 +5037,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1">
      <devId vendorId="0x10de" deviceId="0x1DF6" subsystemVendorId="0x10de" subsystemId="0x13D6"/>
-@@ -10557,6 +15509,22 @@
+@@ -14648,6 +19600,22 @@
        <maxVgpus>1</maxVgpus>
-       <digest type="signature">d1d6a4ece2ae2eb9d0836f8589e387b620cbe3882803ca26e070a9ecac7e3801aad46dcba34976771205ac06fba249d252ba3b4d4543a6028575b5eb10022b70666bb0d6f542b176c4efaf7e419aa494f390e659a77ddd9a0024a141b28b67fba79f7d928fcc99a3211f7d69a873bbba56d775c8f820dee877d3de69bddf8d0f</digest>
+       <digest type="signature">2e262685970ca018648178e91c9293cb635c8d853a874462777dd74b54568a2d9e591f3a8bf34b4aa85867c0bacec814e7b9418fea9e370c5816e68ca01d0595ad13128f5bdcd1f33f1d1acd2f5ebf8401c1efe0ce221ef29571fe91394063b62060d551bace674efd592ad8eb048cb3671daff4aa76d551e1e8ea5a299c9c4f</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="361">
 +      <maxVgpus>8</maxVgpus>
@@ -5061,9 +5060,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1">
      <devId vendorId="0x10de" deviceId="0x1E30" subsystemVendorId="0x10de" subsystemId="0x129E"/>
-@@ -10600,6 +15568,34 @@
+@@ -14691,6 +19659,34 @@
        <maxVgpus>1</maxVgpus>
-       <digest type="signature">95fe22baab268ee1f37d3ff8050cdd466df0b48fd89eddfdf361c695b233eadc7a5eb333538585d99fc97fc42eb0b47bedb8538bffed72770e4acd4ff8f68b75597ab3e1079342a1a08f006f5b0019f4afc8fb46fc0a7765308560af88199419a8cfc51ec1ce5c8058f83dd185500e547dc3c40e60948e0e0b23f864e0999ce2</digest>
+       <digest type="signature">799efed1ae64f79766c7eafb6e52ec9a89e86b228669f5cff84aa2e625e73f68bd4a5a86cc1c42b1823784f8a48df8f8643691b66fcd7ee4b606090ba1798b1db9c45d96c3f9e5d123eab490e48489d4ba1955a12796e0ff73b7634684e56e31046e407ae217790129f1a5275628ebef6d16ee8769afa30528be1245ac2199c6</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="348">
 +      <maxVgpus>8</maxVgpus>
@@ -5095,10 +5094,10 @@ index 0761c27..4b5507c 100644
 +    </supportedVgpu>
      <supportedVgpu vgpuId="445">
        <maxVgpus>32</maxVgpus>
-       <digest type="signature">4326652475b0c5c3a8739543f83e942570a4a59c3196f8a375e59cb31bd8b9cc1f33c2a2543d5da4c8de86506258d95bf3733114760ade6648609d3fe9b3bedf8a1f35625c23c495942462f7b46a0b5bce8f58b80c8e6389269cdc250bc2b13c1952f0bed09e6e29601b1e34d9f1259c88ddd3f13688109f58fc065097d8652c</digest>
-@@ -10683,6 +15679,26 @@
+       <digest type="signature">5996e45405a1bd72df59fdc21cc2a4bf6e1698b13d2cd35f8ee9815a60f3ff9e0cf5c8cc0e91f7a467da3ee16edc92f1b8e4a5240059d8f467cf987d06160ff6d50985c434d4b06634e0e6313979d92c75de5d8a6f0a283dc1c1078af7a94f39c15f938cb4b941a33e52fea1ea2dcad3f92e6c48f069ab7ae0f8aff5f54f98f8</digest>
+@@ -14774,6 +19770,26 @@
        <maxVgpus>1</maxVgpus>
-       <digest type="signature">47f5422aa8dea67fc278c8beacbe545497bf0ed740dfb92638a9d8feeed8c7bf20cf93de6d4fb031b863db140681aff395cf3ef2317af430bdd2ff3cfca3577831a0303281e0960fa2adbd756bd2600a7257dbeafc1bc103924bb31cc94a23fcb76fa16e282050945f9c5a51bfa6e06e4a1bbe3fb87cb2ce1f9d225235e183ed</digest>
+       <digest type="signature">b828b3e6cf560d7ae39c597e5a0221b2fe1f4cca4f3e4e5762b2e50ff0b5ae6e823eec554a24cfaeda323f17253935e1bc07f3ec683a9f17c0fc30686f717c0ffc870e4a6da3cd30492c7905d43fcca99df85b7c334e25831bd085ce03baa86630ffd9e8b8a3203ec4b8afc0ddbe3645be403e22caa75968a798b46375fecad7</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="343">
 +      <maxVgpus>6</maxVgpus>
@@ -5122,10 +5121,10 @@ index 0761c27..4b5507c 100644
 +    </supportedVgpu>
      <supportedVgpu vgpuId="435">
        <maxVgpus>24</maxVgpus>
-       <digest type="signature">7a529ed5ff3803eae54d19d42adc8c9c5f9e3a28ce11931a31de4fff45373fce0162496d6f24064fa0a849439d7b26928c0a5f9f561686e3a66fbc6c20955b0687192f6c264548458139d75927f5aaad0b62f27319ae29df89b047d58b6fb327f15cc67cc782bd374157b4f905819e5c0e13e2a7a155de8e8ec98691f4b1c4f2</digest>
-@@ -10810,6 +15826,34 @@
+       <digest type="signature">a5cfc567a91f0d808132b6a10429f9c2ee22b9604bbcc8e2c641f6423d26e0268d1a14d2e274699deb4b8398f1075ce27f4154ebffd7dc1b16f9d10725aedb5e48f9144c60d434011683b67cd5c528dfe0ce4ee392d16940012df450ae9c43d65a088b381992f3689891a2855df3ac7243e4f748c719fe2f45c439c563d42a65</digest>
+@@ -14901,6 +19917,34 @@
        <maxVgpus>1</maxVgpus>
-       <digest type="signature">3452acbd26718ebb387a28bec9232c033750c5257127593298b6202aac77bd752427d90cf5894158f6d5091880dd0f0050a4e33f859f4c65823974314eed7104ed54235c0e735f597ef8d64e44ba446da6b9989febb71fcc07e2cdffb56d8d89c673c4b3d8cad0d7f24fd91b7f1e41a32392d850218ca2a29f3eeabc6d56b9f7</digest>
+       <digest type="signature">9c4c0cc0726d1d9ebefcb1ed9b9bca76a3ca161869140030fb4877d5ffc5117fcc9998fbff3686bde58431353dcc78df815832beea13378d5383f3654ddc52648d81f3c55dee270655cbfe1787c4d69ab20c52b59317527789afd61421fd7c1bb2a9359f0908fc8fae71834b249cb0c2e57dac08491d0237a0ce7e24010a0782</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="427">
 +      <maxVgpus>8</maxVgpus>
@@ -5157,10 +5156,10 @@ index 0761c27..4b5507c 100644
 +    </supportedVgpu>
      <supportedVgpu vgpuId="434">
        <maxVgpus>3</maxVgpus>
-       <digest type="signature">919b31c48d8cdd724abffa8a6ad434ac746e85246e458e5f1d9ebbad2f189eff45e55ff2c559cfec83ec382722968f702ffe519327f465b648236779866768c4becd0c420d8025ad7893f243e8585a1b73de2446e50b73d78d475ff0a350fef59112c435abe11cd016f5506ab5aae9fe2c9368342a95705aee81cf6a447e85bb</digest>
-@@ -10889,6 +15933,26 @@
+       <digest type="signature">a1ed13fbd2277b451239842059a98e848250c889b92a3454660ab6d8e24fe79f13b2d0f1c4089e7f1943453f90e49a634a18a8b1f157e7e2abcd850439c43cd39a0a5f90a6d65f7a62cfccab7a51b6e3097da803939f235b54092872a342ffc43422d9e429739801bb563d0c994ac7edfe6594ede086b3f4f093f78e166855cc</digest>
+@@ -14980,6 +20024,26 @@
        <maxVgpus>1</maxVgpus>
-       <digest type="signature">a989c2ae947f0fe41454c45c4f560a2d1c99d60ee9af427f875a9b8e605b1ce597e08f1ae3fc803e4e5f0f5e65428b19ef2424ea1d6cec89c94ceb56d03543e5bfeb8f0155db74e4a82a5126ac081e52c31005e5edd33a00e75c482dd6ed2538da401459fb6f6c79ff509c4a540ac299231acc36834f873a728965ae5b001883</digest>
+       <digest type="signature">2d088c2b21c4778314918d8962aba0d586870d4c752b09d2e6c698a7ef5aaa6250d559d42d22218864678bc070d967b3d4857c83a78775e9bcacb8ceb7f51a9b0515833579be48289fb0967a0b99c5dd0cc5f7f96ea2d0f6e3947e1ae5d15558dd0a2fff108b7ae23a4f4a4b3291bb0764faf0f82ff638ad1e33b1dd14cf57d9</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="387">
 +      <maxVgpus>6</maxVgpus>
@@ -5185,9 +5184,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1">
      <devId vendorId="0x10de" deviceId="0x1EB8" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -10948,6 +16012,528 @@
+@@ -15039,6 +20103,528 @@
        <maxVgpus>16</maxVgpus>
-       <digest type="signature">0e4b6a1a4699a7c79404ae0dbbf329f343f2924dc89808d1d08110ff922da1cbd07d156565696abc3246e91feac12c604a9d500f20387667204f5d0b93837599c3f10b2b64d648086de3c153577a34678d1e1b1900fe4ee0806f9e69228cb97c0ff18d5be6db38c92aa3498182dae91f3351c0cccd9e23d3f25f4b5668db1f28</digest>
+       <digest type="signature">5c1d82e27bc7d369043d3b1c722606fdb81cd1a7392cb2d70ad71a81f60e64f6c0dec4a4d369783838d6bb2c65491de6ab0f1a8d6d2369f9a0b719a6e00a48f4e3b4fc5d4fcdfb089f9816225fa0328221575e2e010463d5fc703bd438928eb972ed835f8633244e981015695e5fa3e809c09ff5821223151dcc377337edccb1</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="321">
 +      <maxVgpus>1</maxVgpus>
@@ -5714,9 +5713,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
      <devId vendorId="0x10de" deviceId="0x2230" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -11039,6 +16625,34 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">d2a6dd86c4e07032dc7303dd4752b9d97e19ba94cdd0b4c484037b5550f8f74a8ab694585c25e3d2750796e7f346de66ea7f1c31497e20f945a9b288dab312e1328e71223d9349e6ae8278e1f5d452fbf7f31125609bda88721e43b5b44e668ea2eb8098d4406ca8e80bcafdce7bd750b929d46dfd94d4aff6da823329b24260</digest>
+@@ -15134,6 +20720,34 @@
+       <maxVgpus>16</maxVgpus>
+       <digest type="signature">9db7086e5345db748aeb032cb782541486a99119a6058d2b77ead8f30ec7bb40563a142b7a3dacbbe732f1c9440e402a652edc1dd85b8424a9732be07a30b0100eea6780980eb80f432ee78097db60de798f2fec372cf6026e5059bbd598cd7068ad7c0e27e29d06dc32e95f508587edbea3c868c1ffe57abad862c216b92de6</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="548">
 +      <maxVgpus>12</maxVgpus>
@@ -5749,9 +5748,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
      <devId vendorId="0x10de" deviceId="0x2231" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -11114,6 +16728,26 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">b9c01814c00e4027f238557c561e4107d1f003f41bcde837ceb672bf6ee6fc962730e645cb7b6aef538dfaf9e2bd41f01ff014f1e21ff133a4cbdff777e60a836b2387a7403329bc4a3616f21bca5c08bea30458b1b19efaa0b000461821cc707e06622f0fac6e46c94799c21de4e8b1215d3c1a2b785c3b4065ef236d07d6b6</digest>
+@@ -15213,6 +20827,26 @@
+       <maxVgpus>8</maxVgpus>
+       <digest type="signature">96e937f601674b3efac199b7f68bd5428ea78e3e6a871c55cd095b9331f89e65b14bd2eae7073689e3f37b6d56345c8f93e219f07c51243d215e92e771fd851e7a2b9caaaa2a1cb7e9b4555ea6757501608b75ba7ae721cc76109a256fa19f5518da551b190ab906282f6d795033143a386b72cda5b3e772470cdefb05ffd12d</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="675">
 +      <maxVgpus>6</maxVgpus>
@@ -5776,9 +5775,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
      <devId vendorId="0x10de" deviceId="0x2233" subsystemVendorId="0x10de" subsystemId="0x165A"/>
-@@ -11189,6 +16823,26 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">72ccac1538ce49c1a34dc70a5afdb9d7b95c0d25eaf0c4b859289259d7050e7eb47074b5b8d27239bdc74e44ab48418f22abe068d68207190ab0eb3a405bdf0cd2d1252096f011fb193caeef822b5b9c14681d4270a6f02db3c47a26e8565a97dec73e6dc111d7bc01c60c3f399eafd3515faa8bae737e846984d9913e1b753d</digest>
+@@ -15292,6 +20926,26 @@
+       <maxVgpus>8</maxVgpus>
+       <digest type="signature">a566bca946177cffddd3f05cfea8932210aaf9d84881fd5bdb7f2943bb2dc6861fe2a4fc845a7759715cb96fe497520faf61266acca7db42af7cac81d0f854d6e6fce75535eaaa4e2f200ecaeab658a77df5b0e55c741e2e120f5b81afa3d66d4602fdaba2dbf3dfe86ce75901cdb14959d5522d3883c9dd37b865422c82b3e8</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="782">
 +      <maxVgpus>6</maxVgpus>
@@ -5803,9 +5802,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
      <devId vendorId="0x10de" deviceId="0x2235" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -11280,6 +16934,34 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">42f1fe843d6db055657797504741f810947045674779e7f12cc978836f6d0bbb3b83618cb991bced0361923ca8918e0a6f86755ea66de0ca2f7934e272c030e96feb04078a72f1ae2e9cd3d88293f12b945ed4cbf324640421904961ec7c85eeceaa4e8ca96e417c62a43b661ff1af041c129d274f8310d8e5245bb75fbd1ee7</digest>
+@@ -15387,6 +21041,34 @@
+       <maxVgpus>16</maxVgpus>
+       <digest type="signature">5d38ac4bb4f3a502a0f620374c71ce831fa059f9ac829f0cf91b9e812e0d60adc91b6cda00aa376dbc18f5a0c7f0e27064186a7e1fb72393c99b12ac369214f3564e6f0e6b2daf33382061724157a8ea2acf1e3282b70b88e8514dcb1355526a415b0fb1e8304c66daddb1a281af950fdb2900abcfaccf0d76cdc75fa401ebb6</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="581">
 +      <maxVgpus>12</maxVgpus>
@@ -5838,9 +5837,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
      <devId vendorId="0x10de" deviceId="0x2236" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -11355,6 +17037,26 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">528028e5cbf464ee1ecc1e9be2fb46b16b3b7400dda36f7c056f76129940ae34c8a4f6be758698c05630f9de46d24f832ac90d89b8c277a42f0c9f06969c7d5358c2dafeac96a3375eb13e5f5f22c62b26715e163868202bf2d6224b81e96c8e8699da846b5c11b3e7cdbf32a7f3553a107d928cb70f72b16d65a32e4e56a74b</digest>
+@@ -15466,6 +21148,26 @@
+       <maxVgpus>8</maxVgpus>
+       <digest type="signature">a132ca83e47ed56961ccdcbd322f1d9ceec099f50ee9fe97c2d9d61c641e9f40344bebc642cbffabd53785159b4d9c934997b76e264cccd9c25148bc995e6b8d62eef69c39e24f304306dcb21270d0ec0856b71e2091a1e18de2d1e1080280e6f891938f23edcf65a572c976b2db07d108f98f9d6b961461948f8aa784d9b654</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="610">
 +      <maxVgpus>6</maxVgpus>
@@ -5865,9 +5864,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
      <devId vendorId="0x10de" deviceId="0x2238" subsystemVendorId="0x10de" subsystemId="0x1677"/>
-@@ -11414,6 +17116,140 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">043abd59346836b1fb2f104c2875ea57249b4c5ed1159f2fed0bebeee8df14f6b99b794000cf5544f17ba37b51ec3157bbbf68005a2e779deaf47d0b28cad25388adfdf9e14dafd98142811505e5e600fc6e7647084bd86b86b2b92e7060b80499a96f6ac875e822efee1f9c28bd8011dd43f61fa7288748805d7f0930f37972</digest>
+@@ -15529,6 +21231,140 @@
+       <maxVgpus>6</maxVgpus>
+       <digest type="signature">b6c12319b5f6a353801e085abc293116cb3ecc7670ae739e43ac9fe89cdeb8374af292ec00ae7a51ebafb85dd78370acd31d37c56818aef7d58739104b554991ea1e75164185c146f03f9b40459b09e6b0274e05385db1a7b9a63617998f218c2cc74115474b66de6156126c649a4fda9d0cd491bad44ba5e064d700d96c3f28</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="817">
 +      <maxVgpus>5</maxVgpus>
@@ -6006,9 +6005,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
      <devId vendorId="0x10de" deviceId="0x25B6" subsystemVendorId="0x10de" subsystemId="0x14A9"/>
-@@ -11465,6 +17301,18 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">9f52d09bdc04a2f9eab321b48eea47c3dc1a4457014f55c1de69888f6aa2e208062f64f184838f4edbe77c08807357d1646294c22160cfad47c61f54d457169721c6c5eb8719db706775c7896a9ef44ac92067cf2a8a120c41551f79b97ed57b00afb9c9db6e1a69931e0abb7a2d42c6dba739015d2d9e6c9d704cbb03cc033d</digest>
+@@ -15584,6 +21420,18 @@
+       <maxVgpus>5</maxVgpus>
+       <digest type="signature">c2c7e505de62149ffc741b72afd5f7b1085a657fc0919f34013a56a246fd9c3c57d82c64e40add6db431b0f7ab1d62dae076b43b562dfc00d7b11a05e9db589afe92e5dc244fdf9db02ec30bb452a75e767bb6755de06a9ea599b43ef3b70ca6fd4ed84e6d59321c7941201c56adb6c3430750675598b42d65db56db58d98847</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="721">
 +      <maxVgpus>4</maxVgpus>
@@ -6025,9 +6024,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
      <devId vendorId="0x10de" deviceId="0x25B6" subsystemVendorId="0x10de" subsystemId="0x157E"/>
-@@ -11516,6 +17364,18 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">d1a923b8b0d4b8fd884759b196f0ca3131950b7b4f51107197a24340a939c80982ecabf2ede189258beb5c3eb1697a2e748f08fbe6b82aea67df426deb099553935159c5a6261256262cd232736bcb52c9b7be01a259f228b8c5f120e10fcc7bab6dfa9d5a4ac0c08f3d4f011404ff85b4649b30bc722a00896b1482843b8246</digest>
+@@ -15639,6 +21487,18 @@
+       <maxVgpus>5</maxVgpus>
+       <digest type="signature">8455b06eb2ef58b9d6b63350d2faaf2379c70fc1b4b12cfd96395412f5b5b7688e8c23b8cbdc8fd9ce4e51ce36530c36bdd5ab7486db299a898338eec2456c8726c1b06d572746e9104c7cf5abf09f90ed441bb92ab359c092a0e8b14a5294ef5e05c22fa7023653c41546b67e457a5bfeb99a94d2c350611b6514c934639355</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="754">
 +      <maxVgpus>4</maxVgpus>
@@ -6044,9 +6043,9 @@ index 0761c27..4b5507c 100644
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
      <devId vendorId="0x10de" deviceId="0x26B1" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -11607,6 +17467,34 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">00c5128a693409bb388f4f54b6123d4747cae15654e2377de4831d0f69669fae268bf56c67cb1777399d3930db4a5ee4887927d3505e15d6fa272ac97a34cb2bb468ad0afed8204c6fb41b0fcaf94f1c41c25a82bbc37d0903a4baaa74b8595ba0a3f732b85b8b96a1b7702af3f47b6e3227dbb349376ddf7b26365141f22707</digest>
+@@ -15734,6 +21594,34 @@
+       <maxVgpus>16</maxVgpus>
+       <digest type="signature">0d68eaf9598928883b9e22b54f00f3ffaee0b690bf8f1595fbf87c7a69699734db45da8a3a824f0593573c5c6be4127d67caaf9fa56d70aba99b409c5af2bf2cfdd949417f98f18cd395553a0b1d1f8934daaa7dfef5f999a7f633c75112e1925da98d628f669da8bdb81e10b4e50b42e962d44c6825bfcf7d46e052b2012c59</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="971">
 +      <maxVgpus>12</maxVgpus>
@@ -6078,10 +6077,10 @@ index 0761c27..4b5507c 100644
 +    </supportedVgpu>
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
-     <devId vendorId="0x10de" deviceId="0x26B5" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -11698,6 +17586,34 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">b4de71f0c6a40c16ce4b15cdf08cb0d910828cd517a8ebc4b059cf4fae46610a4fd8322e38898e5ab8bcbe69cbcf015071849255d231b9c001308fd18d3a6610e4a3cc64a4eb45b133158ec5fe58e6965e38593f23e885f8112dd5014f7cd546a30aa81d346b4d2d9ea42d28d4f58227193cda1e38f04ccec39f08b45843ad4f</digest>
+     <devId vendorId="0x10de" deviceId="0x26B2" subsystemVendorId="0x10de" subsystemId="0x17FA"/>
+@@ -15987,6 +21875,34 @@
+       <maxVgpus>16</maxVgpus>
+       <digest type="signature">7bb1af88cdff21ea246bbc49f1e8d6b61c08f27b3ad812816b4cee992d7c6ed623ece0b63a288f7a32fbc9db34cf6f9c939934cb59e6f99439f2f2a107ff45492e2f8f13b349ddbbb104f553a1a428d7d61c1070995272523ac8f5dc63728c6d22b97a2f122c5f9ad841110bddc051adfcc09f4f6f2aa256c5b18384eb8d6478</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="901">
 +      <maxVgpus>12</maxVgpus>
@@ -6113,10 +6112,10 @@ index 0761c27..4b5507c 100644
 +    </supportedVgpu>
    </pgpu>
    <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
-     <devId vendorId="0x10de" deviceId="0x27B8" subsystemVendorId="0x10de" subsystemId="0x0"/>
-@@ -11773,5 +17689,25 @@
-       <maxVgpus>1</maxVgpus>
-       <digest type="signature">1e4b43b486bacffc3832cc5a12b0cf24bbcdec981befc2a6a8386b68a05ba06f230e04074993f732a13e6565efdd491ad4301a803cae3485e650b9872c223fc77a6e9f696ea2af864704db9c41b8e93cd3c35395acf25cb26f626631c39c7f1b7563fc454b08383f6bfe7ef9d46af7417d59c0a25e5dae45be6a4f78816b5ea4</digest>
+     <devId vendorId="0x10de" deviceId="0x26B9" subsystemVendorId="0x10de" subsystemId="0x0"/>
+@@ -16430,6 +22346,26 @@
+       <maxVgpus>8</maxVgpus>
+       <digest type="signature">97f4a9ef42d0fd0e8c69964be78a2d4f7d387034d905f4ae39e9fca198c51af3806cdc6feaf8727225d388dee3de4bad3ff762b7d808202650c4a563201bc72ba9bb76bce081ae14d1cf8aac83a935d5b082975c3dd6522bab3ef0d961ac2eaf24ebfe81614363af3d862fbc52e9437ff71b4f5018202c02ff05e70a600262c0</digest>
      </supportedVgpu>
 +    <supportedVgpu vgpuId="934">
 +      <maxVgpus>6</maxVgpus>
@@ -6139,4 +6138,5 @@ index 0761c27..4b5507c 100644
 +      <digest type="signature">7683887ce24cf03a014c6085a5d738e84b152594d319c4bf44092d79a27185931a4293507b739439029e93b9b632d4f844b0293be7031c2aef351a14afa4f6c81d44b338cf01264833767a69fb0ec6439058ae96b6996d7abda16dadf033f36880c2b7e2d1205043001ac0657cc8d92d638eaef961d25f8ef8a0af4d79a6ccfd</digest>
 +    </supportedVgpu>
    </pgpu>
- </vgpuconfig>
+   <pgpu fractionalMultiVgpu="1" hostVgpuMode="sriov">
+     <devId vendorId="0x10de" deviceId="0x2BB5" subsystemVendorId="0x10de" subsystemId="0x204E"/>

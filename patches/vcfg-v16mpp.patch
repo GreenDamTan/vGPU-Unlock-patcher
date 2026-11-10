@@ -1,8 +1,7 @@
 diff --git a/vgpuConfig.xml b/vgpuConfig.xml
-index 3ad55c9..3087875 100644
 --- a/vgpuConfig.xml
 +++ b/vgpuConfig.xml
-@@ -257,6 +258,2095 @@
+@@ -257,6 +257,2095 @@
      <frame_rate_limiter>1</frame_rate_limiter>
      <license>VPC;QVDWS;VWS;VWSExt</license>
    </vgpuType>
@@ -2098,8 +2097,8 @@ index 3ad55c9..3087875 100644
    <vgpuType id="126" name="GRID V100X-1B" class="NVS">
      <devId vendorId="0x10de" deviceId="0x1DB1" subsystemVendorId="0x10de" subsystemId="0x1259"/>
      <profileSize>0x40000000</profileSize>
-@@ -9570,6 +11220,494 @@
-       <digest type="signature">82f7d4f1aa23941efc163a9e0853681b1f4b75df750eecc5995bfa5e66a899badaf93f9200e2a4c5621920da2af95c6fe519da15a7d2e337195a3d512732d908afbf766bc1cdb23c578d260d4742ed66dbb808ddadffebbcd0544e8f2bd74b52528bfb978bdb008cd5f7c64e9a317a641a0e2da74a6437487d8818fd69daebc6</digest>
+@@ -11702,6 +13791,494 @@
+       <digest type="signature">63ecfd304ae6062b898fe3df20827cc4827e5e33bfe2ff05568d988bd0eff3e352c1221d309c3f663b6079fde190d03b059dacdabaa09a64e61c26465126f85b69aab370f6503874f7ac9adccc42bb848720777ea3e93f6c940ed78a74e3265d5f468f84514a7d218a5dcf57a122dfcac8a605529f799aeb2d4dd5451fb6b820</digest>
      </supportedVgpu>
    </pgpu>
 +  <pgpu fractionalMultiVgpu="0">

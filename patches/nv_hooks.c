@@ -4,6 +4,7 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/preempt.h>
+#include <asm/linkage.h>
 
 
 #ifndef preempt_enable_no_resched
@@ -96,20 +97,29 @@ static void vup_hook_cudahost_naked(void)
 		"push   %rcx            \n"
 		"push   %r8             \n"
 		"push   %r9             \n"
-		"lea   0x50c(%rbx), %rdi\n"
+		"push   %rax            \n"
+		"push   %r10            \n"
+		"push   %r11            \n"
+		"lea   0x42c(%r13), %rdi\n"
 		"call  vup_hook_cudahost\n"
+		"pop    %r11            \n"
+		"pop    %r10            \n"
+		"pop    %rax            \n"
 		"pop    %r9             \n"
 		"pop    %r8             \n"
 		"pop    %rcx            \n"
 		"pop    %rdx            \n"
 		"pop    %rsi            \n"
 		"pop    %rdi            \n"
-		"cmpb   $0, 0x824(%r13) \n"
-		"ret                    \n"
+		"cmpb   $0, 0x968(%r14) \n"
+		ASM_RET
 		"int3                   \n"
 	);
 }
 STACK_FRAME_NON_STANDARD(vup_hook_cudahost_naked);
+#else
+static int vup_gridext = 1;
+module_param_named(gridext, vup_gridext, int, 0400);
 #endif
 
 
@@ -135,12 +145,18 @@ static void vup_hook_vupdevid_naked(void)
 		"push   %rcx            \n"
 		"push   %r8             \n"
 		"push   %r9             \n"
-		"mov    %r15, %rdi      \n"
-		"mov   0xaa8(%r14), %esi\n"
+		"push   %r10            \n"
+		"push   %r11            \n"
+		"sub    $8, %rsp        \n"
+		"mov    %r15d, %edi     \n"
+		"mov   0xcf4(%r14), %esi\n"
 		"call  vup_hook_vupdevid\n"
 		"test   %eax, %eax      \n"
-		"mov    $1, %r13d       \n"
+		/* r13d 中的设备类别仍供后续能力表匹配使用。 */
 		"cmovne %eax, %r15d     \n"
+		"add    $8, %rsp        \n"
+		"pop    %r11            \n"
+		"pop    %r10            \n"
 		"pop    %r9             \n"
 		"pop    %r8             \n"
 		"pop    %rcx            \n"
@@ -149,15 +165,14 @@ static void vup_hook_vupdevid_naked(void)
 		"pop    %rdi            \n"
 		"mov    %r12, %rax      \n"
 		"mov    %r15d, %ebx     \n"
-		"ret                    \n"
+		ASM_RET
 		"int3                   \n"
 	);
 }
 STACK_FRAME_NON_STANDARD(vup_hook_vupdevid_naked);
 
 static int vup_klogtrace_filter[][2] = {
-	{ 0xbfe247, 0x0684 },
-	{ 0xe3cee1, 0x064C },
+	{ 0xe3cee1, 0x0648 },
 };
 
 static int vup_klogtrace;
@@ -201,7 +216,13 @@ static void vup_hook_klogtrace_naked(void)
 		"push   %rcx            \n"
 		"push   %r8             \n"
 		"push   %r9             \n"
+		"push   %rax            \n"
+		"push   %r10            \n"
+		"push   %r11            \n"
 		"call vup_hook_klogtrace\n"
+		"pop    %r11            \n"
+		"pop    %r10            \n"
+		"pop    %rax            \n"
 		"pop    %r9             \n"
 		"pop    %r8             \n"
 		"pop    %rcx            \n"
@@ -209,86 +230,89 @@ static void vup_hook_klogtrace_naked(void)
 		"pop    %rsi            \n"
 		"pop    %rdi            \n"
 		"sub    $0x440, %rbp    \n"
-		"ret                    \n"
+		ASM_RET
 		"int3                   \n"
 	);
 }
 STACK_FRAME_NON_STANDARD(vup_hook_klogtrace_naked);
 
 
+/* hook 偏移相对 .text；入口 rsp % 16 == 8，调用 helper 前须对齐。
+ * rbp 是 RM 独立软件栈，helper 保持其值；标志位由重放或后续 cmp 覆盖。
+ */
 static struct vup_hook_info vup_hooks[] = {
 #if defined(NV_VGPU_KVM_BUILD)
-	VUP_HOOK(0x00416B9C, cudahost, 1, 0x41, 0x80, 0xBD, 0x24, 0x08, 0x00, 0x00, 0x00),
-	VUP_HOOK(0x0051E3A7, vupdevid, 1, 0x4C, 0x89, 0xE0, 0x44, 0x89, 0xFB),
-	VUP_HOOK(0x00016185, klogtrace,0, 0x48, 0x81, 0xED, 0x40, 0x04, 0x00, 0x00),
+	VUP_HOOK(0x004CEF63, cudahost, 1, 0x41, 0x80, 0xBE, 0x68, 0x09, 0x00, 0x00, 0x00),
+	VUP_HOOK(0x00601DFA, vupdevid, 1, 0x4C, 0x89, 0xE0, 0x44, 0x89, 0xFB),
+	VUP_HOOK(0x00019C55, klogtrace,0, 0x48, 0x81, 0xED, 0x40, 0x04, 0x00, 0x00),
 #else
-	VUP_HOOK(0x0051E3A7, vupdevid, 1, 0x4C, 0x89, 0xE0, 0x44, 0x89, 0xFB),
-	VUP_HOOK(0x00016185, klogtrace,0, 0x48, 0x81, 0xED, 0x40, 0x04, 0x00, 0x00),
+	VUP_HOOK(0x00601DFA, vupdevid, 1, 0x4C, 0x89, 0xE0, 0x44, 0x89, 0xFB),
+	VUP_HOOK(0x00019C55, klogtrace,0, 0x48, 0x81, 0xED, 0x40, 0x04, 0x00, 0x00),
 #endif
 };
 
 
 #if defined(NV_VGPU_KVM_BUILD)
 
-#define RM_IOCTL_OFFSET 0xae2680
+#define RM_IOCTL_OFFSET 0xd67cf0
 
+/* 580.196.09：字节补丁偏移包含 .text 文件起点 0x40。 */
 static struct vup_patch_item vup_diff_vgpusig[] = {
 	// based on patch from mbuchel to disable vgpu config signature
-	{ 0x000BBEF0, 0x85, 0x31 },
+	{ 0x000C8677, 0x85, 0x31 },
 };
 VUP_PATCH_DEF(vgpusig, 1, 1, 1);
 
 static struct vup_patch_item vup_diff_kunlock[] = {
-	{ 0x000D65C8, 0x75, 0xEB },
-	{ 0x00512208, 0xE0, 0xC8 },
-	{ 0x005148F5, 0x95, 0x93 },
-	{ 0x0051DDDE, 0x07, 0x00 },
-	{ 0x0051DDE2, 0x00, 0x01 },
-	{ 0x0051E600, 0x75, 0xEB },
-	{ 0x00527E1F, 0xF8, 0xC8 },
+	{ 0x000EC778, 0x75, 0xEB }, /* _nv038624rm */
+	{ 0x005F0788, 0xE0, 0xC8 }, /* _nv031118rm */
+	{ 0x005F6325, 0x95, 0x93 }, /* _nv031130rm */
+	/* _nv030823rm 的回退分支和配置标志由静态 diff 覆盖。 */
+	{ 0x00602082, 0x75, 0xEB }, /* _nv030281rm */
+	{ 0x0060FCEF, 0xF8, 0xC8 }, /* _nv030289rm */
 };
 VUP_PATCH_DEF(kunlock, 1, 1, 1);
 
 static struct vup_patch_item vup_diff_qmode[] = {
-	{ 0x00523E86, 0x0D, 0x07 },
-	{ 0x00523E8F, 0x84, 0x85 },
+	{ 0x00609538, 0x0D, 0x07 },
+	{ 0x00609541, 0x84, 0x85 },
 };
 VUP_PATCH_DEF(qmode, 0, 0, 1);
 
 static struct vup_patch_item vup_diff_merged[] = {
-	{ 0x000B3AD9, 0x97, 0x00 },
-	{ 0x004FA095, 0x2A, 0x00 },
+	{ 0x0060464D, 0x74, 0xEB },
+	{ 0x005D6245, 0x2A, 0x00 },
 };
 VUP_PATCH_DEF(merged, VUP_MERGED_DRIVER, 1, 1);
 
+/* 静态默认继续设置，启用后在活动计数非零时提前成功返回。 */
 static struct vup_patch_item vup_diff_swrlwar[] = {
-	{ 0x0047CBBB, 0xB1, 0xCA },
-	{ 0x0047CC89, 0x44, 0x90 },
-	{ 0x0047CC8A, 0x89, 0x31 },
-	{ 0x0047CC8B, 0xE8, 0xC0 },
+	{ 0x0053E5A0, 0x31, 0x85 },
+	{ 0x0053E5A2, 0xEB, 0x74 },
+	{ 0x0053E5AE, 0x0F, 0x90 },
+	{ 0x0053E5AF, 0x84, 0xE9 },
 };
 VUP_PATCH_DEF(swrlwar, 0, 1, 1);
 
 static struct vup_patch_item vup_diff_fbcon[] = {
-	{ 0x00AEA8F3, 0x84, 0x30 },
+	{ 0x00D70D9A, 0x84, 0x30 },
 };
 VUP_PATCH_DEF(fbcon, 1, 1, 1);
 
 static struct vup_patch_item vup_diff_sunlock[] = {
-	{ 0x000D65FA, 0x01, 0x00 },
-	{ 0x000D65C8, 0x75, 0xEB },
-	{ 0x004F6D2A, 0x00, 0x03 },
-	{ 0x000BECB1, 0x42, 0x00 },
+	{ 0x000EC7AA, 0x01, 0x00 },
+	{ 0x000EC778, 0x75, 0xEB },
+	{ 0x005D141A, 0x00, 0x03 },
+	{ 0x000CC8E4, 0x4E, 0x00 },
 
 	// based on patch from LIL'pingu fixing xid 43 crashes
-	{ 0x000BE72C, 0x10, 0x00 },
+	{ 0x000CC251, 0x10, 0x00 },
 };
 VUP_PATCH_DEF(sunlock, 0, 1, 1);
 
 static struct vup_patch_item vup_diff_gspvgpu[] = {
-	{ 0x00033EE5, 0x1B, 0x00 },
-	{ 0x00033EF1, 0x74, 0xEB },
-	//{ 0x000C38DA, 0x85, 0x31 },
+	{ 0x00038C4B, 0x1B, 0x00 },
+	{ 0x00038C57, 0x74, 0xEB },
 };
 VUP_PATCH_DEF(gspvgpu, 0, 1, 1);
 
@@ -303,19 +327,19 @@ struct vup_patch_info *vup_patches[] = {
 	VUP_PATCH(gspvgpu),
 };
 
-#elif defined(NV_GRID_BUILD)
+#else
 
-static int vup_gridext = 1;
-module_param_named(gridext, vup_gridext, int, 0400);
+/* GRID 派生 general 仍使用 580.196.07 RM，与 GRID_BUILD 标志无关。 */
+#define RM_IOCTL_OFFSET 0xd67c80
 
-#define RM_IOCTL_OFFSET 0xae2680
 static struct vup_patch_item vup_diff_general[] = {
-	{ 0x000D65C8, 0x75, 0xEB },
-	{ 0x008DC797, 0x14, 0xA0 },
-	{ 0x008DC798, 0x00, 0x05 },
-	{ 0x00AF2C31, 0x75, 0xEB },
+	{ 0x000EC778, 0x75, 0xEB },
+	{ 0x00ABEFA8, 0x14, 0xA0 },
+	{ 0x00ABEFA9, 0x00, 0x05 },
+	{ 0x00D79CE3, 0x75, 0xEB },
 };
 VUP_PATCH_DEF(general, 0, 1, 1);
+
 struct vup_patch_info *vup_patches[] = {
 	VUP_PATCH(general),
 };
@@ -332,7 +356,7 @@ static void vup_inject_hooks(u8 *blob)
 	logbuf[0] = '\0';
 	for (i = 0; i < ARRAY_SIZE(vup_hooks); i++) {
 		hi = &vup_hooks[i];
-		if (vup_vgpukvm_opt == 0 && hi->ovgpu)
+		if (vup_vgpukvm_opt <= 0 && hi->ovgpu)
 			continue;
 		j = strlen(logbuf);
 		size = sizeof(logbuf) - j;
@@ -373,7 +397,7 @@ static void vup_apply_patches(u8 *base)
 	logbuf[0] = '\0';
 	for (i = 0; i < ARRAY_SIZE(vup_patches); i++) {
 		pi = vup_patches[i];
-		if (vup_vgpukvm_opt == 0 && pi->ovgpu)
+		if (vup_vgpukvm_opt <= 0 && pi->ovgpu)
 			continue;
 		j = strlen(logbuf);
 		size = sizeof(logbuf) - j;
@@ -458,7 +482,7 @@ void vup_hooks_init(void)
 
 #if defined(NV_VGPU_KVM_BUILD)
 	vup_vgpukvm_opt = nv_vgpu_kvm_enable;
-#elif defined(NV_GRID_BUILD)
+#else
 	vup_vgpukvm_opt = vup_gridext;
 #endif
 
