@@ -730,6 +730,29 @@ $DO_VGPU && sed -e 's/is_vgpu_host_package/_s_vgpu_host_package/g'  -i ${TARGET}
 $DO_MRGD && {
     sed -e '/^NVIDIA_CFLAGS += .*BIT_MACROS$/aNVIDIA_CFLAGS += -DVUP_MERGED_DRIVER=1' -i ${TARGET}/kernel{,-open}/nvidia/nvidia.Kbuild
     blobpatch ${TARGET}/libnvidia-ml.so.${VER_TARGET%.*}.* "$BASEDIR/patches/libnvidia-ml.so.${VER_TARGET%.*}.diff" || exit 1
+    if [ -e "${TARGET}/nvidia-gridd" ]; then
+        applypatch "${TARGET}" nvlts-gridd-service.patch
+        mkdir -p "${TARGET}/nvlts/configs" || die "failed to create nvlts directory"
+        install -m 0755 "$BASEDIR/tools/nvlts/nvlts" "${TARGET}/nvlts/nvlts" || die "failed to copy nvlts"
+        for config in Legacy_GRID_vApps Legacy_GRID_vGaming Legacy_GRID_vPC Legacy_GRID_vWS Legacy_Quadro_vDWS vApps vCS vGaming vPC vWS; do
+            install -m 0644 "$BASEDIR/tools/nvlts/configs/${config}.json" "${TARGET}/nvlts/configs/" || die "failed to copy nvlts config ${config}.json"
+        done
+        python3 - "$TARGET" <<'PY' || die "failed to register nvlts files"
+import json
+import sys
+from pathlib import Path
+
+target = Path(sys.argv[1])
+with (target / ".manifest").open("a") as manifest:
+    manifest.write("nvlts/nvlts 0755 EXPLICIT_PATH /opt/nvlts MODULE:vgpu\n")
+    for config in sorted((target / "nvlts/configs").glob("*.json")):
+        manifest.write(f"nvlts/configs/{config.name} 0644 EXPLICIT_PATH /opt/nvlts/configs MODULE:vgpu\n")
+path = target / "sandboxutils-filelist.json"
+entries = json.loads(path.read_text())
+entries.append({"name": "nvlts/nvlts", "type": "BINARY", "category": ["vgpu"]})
+path.write_text(json.dumps(entries, indent=3) + "\n")
+PY
+    fi
 }
 
 $DO_LIBS && {

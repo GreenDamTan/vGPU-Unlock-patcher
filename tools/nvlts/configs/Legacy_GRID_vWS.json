@@ -1,0 +1,10 @@
+{
+    "GuestDriverVersion": "572.83",
+    "HostDriverVersion": "570.133.10",
+    "ProductName": "GRID Virtual Workstation",
+    "FeatureName": "GRID-Virtual-WS",
+    "FeatureVersion": "2.0",
+    "GPU": [
+        ""
+    ]
+}

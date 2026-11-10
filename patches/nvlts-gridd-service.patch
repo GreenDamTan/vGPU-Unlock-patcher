@@ -1,0 +1,11 @@
+diff --git a/init-scripts/systemd/nvidia-gridd.service b/init-scripts/systemd/nvidia-gridd.service
+--- a/init-scripts/systemd/nvidia-gridd.service
++++ b/init-scripts/systemd/nvidia-gridd.service
+@@ -13,6 +13,7 @@
+ After=systemd-resolved.service network-online.target nss-lookup.target nvidia-persistenced.service
+
+ [Service]
++ExecStartPre=/opt/nvlts/nvlts -c /opt/nvlts/configs/vWS.json -g
+ Environment="LD_LIBRARY_PATH=/usr/lib/nvidia/gridd" "KRB5_CLIENT_KTNAME=/etc/krb5.keytab"
+ Type=forking
+ ExecStart=/usr/bin/nvidia-gridd

@@ -1,0 +1,10 @@
+{
+    "GuestDriverVersion": "572.83",
+    "HostDriverVersion": "570.133.10",
+    "ProductName": "NVIDIA vGaming",
+    "FeatureName": "GRID-vGaming",
+    "FeatureVersion": "8.0",
+    "GPU": [
+        ""
+    ]
+}

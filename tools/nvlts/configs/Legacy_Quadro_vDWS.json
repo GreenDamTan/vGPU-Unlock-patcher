@@ -1,0 +1,10 @@
+{
+    "GuestDriverVersion": "572.83",
+    "HostDriverVersion": "570.133.10",
+    "ProductName": "Quadro Virtual Data Center Workstation",
+    "FeatureName": "Quadro-Virtual-DWS",
+    "FeatureVersion": "5.0",
+    "GPU": [
+        ""
+    ]
+}

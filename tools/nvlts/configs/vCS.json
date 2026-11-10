@@ -1,0 +1,10 @@
+{
+    "GuestDriverVersion": "572.83",
+    "HostDriverVersion": "570.133.10",
+    "ProductName": "NVIDIA Virtual Compute Server",
+    "FeatureName": "NVIDIA-vComputeServer",
+    "FeatureVersion": "9.0",
+    "GPU": [
+        ""
+    ]
+}

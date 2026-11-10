@@ -1,0 +1,10 @@
+{
+    "GuestDriverVersion": "572.83",
+    "HostDriverVersion": "570.133.10",
+    "ProductName": "NVIDIA Virtual PC",
+    "FeatureName": "GRID-Virtual-PC",
+    "FeatureVersion": "2.0",
+    "GPU": [
+        ""
+    ]
+}

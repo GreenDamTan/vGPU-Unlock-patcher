@@ -1,0 +1,10 @@
+{
+    "GuestDriverVersion": "572.83",
+    "HostDriverVersion": "570.133.10",
+    "ProductName": "NVIDIA Virtual Applications",
+    "FeatureName": "GRID-Virtual-Apps",
+    "FeatureVersion": "3.0",
+    "GPU": [
+        ""
+    ]
+}
